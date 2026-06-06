@@ -1,0 +1,55 @@
+{
+  "summary": "End-to-end testing of Banban v4 merge (Banban + Banban_new): backend APIs (health, AI health, scores/live, scores/top, livescore/today, ai/predict, auth) AND frontend integration (Scoreboard, Match Center, AI prediction modal, Shelby video, sponsors). 9/9 backend pytest cases pass. Frontend loads cleanly in Chrome-like Playwright browser. The KRITIK Morocco-exclusion bug is FIXED — World Cup 2026 matches (Canada vs Bosnia, USA vs Paraguay, Brazil vs Morocco, Qatar vs Switzerland, Haiti vs Scotland) surface correctly in /api/scores/top and the UI scoreboard. AI /api/ai/predict returns valid 3-model output (openai/gpt-5.2 + gemini/gemini-3.1-pro-preview + anthropic/claude-sonnet-4-5) with proper individual[] and harmonized{} structure (~22s response time). The full UI flow (match-row-0 click → modal → ai-predict-btn → ai-winner/score/confidence/analysis rendered → ai-toggle-details breakdown) works.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "AI prediction model breakdown panel",
+        "issue": "After clicking ai-toggle-details, the breakdown panel shows OpenAI/GPT and Claude headers but no element with the literal text 'Gemini' was detected in the rendered DOM. The Gemini model IS used and returned by backend (models_used contains gemini/gemini-3.1-pro-preview), so this is a label-only mismatch in AIPrediction.tsx — likely the 3rd model card uses a different display string (e.g., 'GEM' or 'G3 Pro'). Verify model name labels in /app/frontend/components/AIPrediction.tsx match the provider id mapping.",
+        "affected_selectors": ["data-testid model card labels"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Match Center filter tabs",
+        "issues": [
+          "HAZIRLIK and AVRUPA ŞAMP. filters returned 0 matches — likely no matches in those categories today (data-driven, NOT a bug), but UX could show a friendly 'Bu kategoride bugün maç yok' message instead of an empty list. Currently the area just collapses silently."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_banban_v4.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional/minor) Verify Gemini model card label rendering in /app/frontend/components/AIPrediction.tsx — backend returns 'gemini/gemini-3.1-pro-preview' but UI didn't surface 'Gemini' text in our DOM scan. Confirm a visible label like 'Gemini 3 Pro' is present on the 3rd model card.",
+    "(Optional/UX) Add empty-state message for Match Center filters that return 0 results (HAZIRLIK / AVRUPA ŞAMP. when no matches in category today).",
+    "Populate /app/memory/test_credentials.md with the seeded admin (admin@banbansports.app / Banban2026!Admin) for future agents."
+  ],
+  "critical_code_review_comments": [
+    "Good: Morocco-bug fix (livescore.py) correctly uses is_intl precedence before EXCLUDED_COUNTRIES — World Cup matches with host country Morocco now surface.",
+    "Good: ai_predictor.py uses parallel model invocation with Claude harmonizer; structured JSON output; cache TTL on Mongo.",
+    "Good: All major UI elements have data-testid attributes (match-row-N, ai-predict-btn, ai-toggle-details, ai-winner, ai-score, ai-confidence, ai-analysis, shelby-play-btn, sponsors-grid).",
+    "Minor: AI predict P95 latency ~22s on uncached calls. Consider adding a UI-visible loading indicator with progress text 'GPT-5.2... / Gemini... / Claude...' so users understand the wait.",
+    "Minor: /api/auth/me without cookie returns 200 + {user: null} which is correct but documented poorly — keep as is.",
+    "Minor: livescore today returns ~39 stages; consider server-side filtering for non-football leagues if perceived noise grows."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_banban_v4.py (new comprehensive pytest file)"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 pytest passed including external ingress)",
+    "frontend": "100% on critical flows (homepage load, scoreboard render, match modal open, AI predict 3-model, toggle details, shelby + sponsors visible)"
+  },
+  "test_credentials": "Seeded admin: admin@banbansports.app / Banban2026!Admin (from backend/.env). Also created ephemeral TEST_user_* accounts during auth flow tests (cleanup not implemented — DB will accumulate test users; consider adding /api/admin endpoint for cleanup).",
+  "seed_data_creation": "Created transient TEST_user_<uuid>@banban.test accounts during cookie-auth pytest run. No persistent seeds added.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend stable on port 8001 via supervisor. External ingress (https://46069e3e-3827-43b7-afc2-16a1a01763c6.preview.emergentagent.com) responds 200 on /api/health. AI predict endpoint REQUIRES body keys 'home' and 'away' (NOT 'home_team'/'away_team'). Use no_cache:true to force fresh inference (default response ~22s, cached <500ms). Frontend Next.js 15.5.18 on port 3000 with hot-reload; service worker is registered (may cache aggressively — hard-reload or new browser context if stale). Match Center filter tab labels (in DOM, uppercased via CSS): 'TÜMÜ', 'SÜPER LİG', 'MİLLİ MAÇ', 'DÜNYA KUPASI', 'AVRUPA ŞAMP.', 'HAZIRLIK', 'ŞAMPİYONLAR LİGİ', 'AVRUPA LİGİ', 'KONFERANS LİGİ', 'PREMIER LİG', 'LA LİGA', 'BUNDESLİGA', 'SERIE A', 'LIGUE 1'. AI predict modal flow: open via [data-testid=match-row-N] → click [data-testid=ai-predict-btn] → wait up to 60s → [data-testid=ai-winner|ai-score|ai-confidence|ai-analysis] populate → toggle [data-testid=ai-toggle-details] for 3-model breakdown.",
+  "rca_of_the_issue": "N/A — no blocking bugs found. The previously reported Morocco/Africa/Asia exclusion bug that hid World Cup matches is confirmed FIXED: /api/scores/top now returns 5 World Cup 2026 fixtures (Canada-Bosnia, USA-Paraguay, Qatar-Switzerland, Brazil-Morocco, Haiti-Scotland) all tagged league='DÜNYA KUPASI', and these render in the frontend scoreboard rotation and Match Center. is_intl check correctly precedes EXCLUDED_COUNTRIES so host-country Morocco no longer filters out international fixtures."
+}

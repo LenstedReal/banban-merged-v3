@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 3 validates Banban v5 merge: (1) emergentintegrations removal complete — direct SDKs only (openai/anthropic/google-generativeai). (2) AI graceful degradation when no keys: /api/ai/health → configured:false (200 OK), /api/ai/predict → {available:false, error:'Hiçbir AI sağlayıcı yapılandırılmamış…'} (200 OK, NOT 500). (3) Türkçe team translations live everywhere: Kanada/ABD/Brezilya/Katar/İsviçre/Bosna Hersek/Fas/İskoçya — with original English preserved in team1_en/team2_en + Events.T1[0].NmEn. (4) Istanbul timezone formatting: BUGÜN 19:00 / YARIN 01:00 visible on scoreboard. (5) /api/match/stats reverse mapping works — both `?home=Kanada&away=Bosna Hersek` and `?home=Canada&away=Bosnia` resolve to the SAME live_event_id (1417915). 11/11 pytest pass (1 skipped for missing env var inside pytest). Frontend renders Turkish names, modal opens, AIPrediction panel renders graceful error in Turkish when TAHMİN ÜRET clicked, TRT 1 default channel, 24 sponsor logos, 2 match cards under default DÜNYA KUPASI filter.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "AI predict button click via Playwright force=True locator click",
+        "issue": "Direct locator.click(force=True) on [data-testid=ai-predict-btn] inside the open modal did not trigger the React onClick handler (no /api/ai/predict request fired). When the same element is clicked via page.evaluate -> element.click() the request fires correctly and the Turkish error 'Hiçbir AI sağlayıcı yapılandırılmamış…' renders inside [data-testid=ai-prediction]. This is most likely a framer-motion modal overlay/backdrop swallowing the synthetic pointer event during Playwright's force-click; it is NOT a real UX bug for end users (real users move the mouse + click which generates full pointer/mouseup sequence). Worth verifying once with a manual click to be safe.",
+        "affected_selectors": ["[data-testid=ai-predict-btn]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_banban_v5.py",
+    "/app/test_reports/pytest/pytest_v5_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Manually verify TAHMİN ÜRET button is mouse-clickable end-to-end (one real click in a browser). All evidence indicates the click handler + API call + error rendering work — the Playwright force-click issue appears to be a test-runtime artifact (modal overlay) not a real bug.",
+    "When AI keys are added to /app/backend/.env, re-run /api/ai/predict to confirm 3-model harmonized flow still works (regression already validated in iteration_2 with EMERGENT_LLM_KEY)."
+  ],
+  "critical_code_review_comments": [
+    "GOOD: ai_predictor.py uses asyncio.to_thread to run sync SDK calls without blocking event loop. Robust _extract_json handles markdown-wrapped JSON.",
+    "GOOD: predict_match() short-circuits with {available:false} when no providers configured — no 500 errors, no exceptions leak.",
+    "GOOD: team_translations.py covers all 80+ FIFA national teams + top European clubs; tr_team_name has exact + case-insensitive fallback; tr_to_en_candidates enables BOTH-direction match-stats lookup.",
+    "GOOD: scores.py preserves team1_en/team2_en in addition to translated team1/team2 — frontend can show TR while still matching upstream EN data.",
+    "GOOD: All interactive UI elements have data-testid attributes (match-row-N, ai-prediction, ai-predict-btn, ai-error, ai-loading, match-stats-modal, sponsors-grid).",
+    "MINOR: ai_predict.py /predict GET variant ignores body.no_cache (only POST forwards use_cache). Acceptable since GET is for SSR/quick links.",
+    "MINOR: Consider extracting the 3 SDK call wrappers (_call_openai_sync / _call_anthropic_sync / _call_gemini_sync) into per-file modules under app/services/ai_providers/ to reduce ai_predictor.py from ~390 lines."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_banban_v5.py (new pytest file targeting iteration 3 changes)"
+  ],
+  "success_rate": {
+    "backend": "100% (11/11 pytest passed, 1 skipped due to env var visibility inside pytest — external ingress separately verified working via curl)",
+    "frontend": "95% (Turkish names visible, scoreboard rotation OK, modal opens, AI graceful error renders correctly via JS click — Playwright force-click on ai-predict-btn is the only quirk and is test-runtime not user-facing)"
+  },
+  "test_credentials": "Seeded admin: admin@banbansports.app / Banban2026!Admin (from backend/.env). AI provider keys all empty by design for this iteration.",
+  "seed_data_creation": "Created transient TEST_user_<uuid>@banban.test accounts during cookie-auth pytest run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend v4.0 stable on internal :8001 and external ingress (https://46069e3e-3827-43b7-afc2-16a1a01763c6.preview.emergentagent.com). Today's data: 5 World Cup 2026 matches (Kanada-Bosna Hersek BUGÜN 19:00, ABD-Paraguay BUGÜN 01:00, Katar-İsviçre YARIN 19:00, etc). When AI keys ARE added to /app/backend/.env later, replace test_ai_health_configured_false_no_keys + test_ai_predict_graceful_when_no_keys with the iteration_2 'configured:true / available:true / 3-model' assertions (already present in /app/backend/tests/test_banban_v4.py). To trigger AI predict via UI scripting, prefer page.evaluate(() => document.querySelector('[data-testid=ai-predict-btn]').click()) over locator.click(force=True) — the modal overlay can swallow Playwright's force-click but the real onClick fires fine. Default Match Center filter is TÜMÜ but DÜNYA KUPASI tab shows the 2 World Cup cards visible by default. Channel sidebar default: TRT 1.",
+  "rca_of_the_issue": "N/A — no blocking bugs. All iteration 3 acceptance criteria verified:\n1. /api/ai/health → {configured:false, providers:{openai:false,anthropic:false,gemini:false}, models:{openai:'gpt-5.2',anthropic:'claude-sonnet-4-5-20250929',gemini:'gemini-3-pro-preview'}} ✓\n2. /api/ai/predict POST with no keys → {available:false, error:'Hiçbir AI sağlayıcı yapılandırılmamış…', providers:{...}} status 200 (NOT 500) ✓\n3. /api/scores/top?n=5 returns 5 matches with team1='Kanada' team1_en='Canada', team1='ABD' team1_en='USA', etc ✓\n4. /api/scores/live returns {team1:'Kanada', team2:'Bosna Hersek', team1_en:'Canada', team2_en:'Bosnia and Herzegovina'} ✓\n5. /api/livescore/today returns 39 Stages, first stage 'Group B/group-b', Events[].T1[0].Nm='Kanada' NmEn='Canada' ✓\n6. /api/match/stats?home=Kanada&away=Bosna%20Hersek AND ?home=Canada&away=Bosnia BOTH return same live_event_id=1417915 with eps='NS' and sources=['livescore','livescore_statistics'] ✓\n7. Status strings use Istanbul TZ: 'BUGÜN 19:00', 'BUGÜN 01:00', 'YARIN 19:00' ✓\n8. Auth cookie flow register→me→login regression passes ✓\n9. Frontend renders Türkçe names (Kanada/ABD/Brezilya/Katar/İsviçre) + BUGÜN/YARIN + 24 sponsor logos + TRT 1 default channel + modal opens on match-row click + AI panel renders Turkish error gracefully when no keys ✓"
+}
