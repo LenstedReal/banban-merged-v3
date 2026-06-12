@@ -1,18 +1,19 @@
-"""MongoDB client singleton (Motor)."""
+"""MongoDB client singleton (Motor). Motor is imported lazily so the module
+can load on serverless runtimes where motor isn't installed (scores-only deploy)."""
 import logging
-from typing import Optional
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from typing import Optional, Any
 from .config import MONGO_URL, DB_NAME
 
 logger = logging.getLogger("banbansports.db")
 
-_client: Optional[AsyncIOMotorClient] = None
-_db: Optional[AsyncIOMotorDatabase] = None
+_client: Optional[Any] = None
+_db: Optional[Any] = None
 
 
-async def init_db() -> Optional[AsyncIOMotorDatabase]:
+async def init_db() -> Optional[Any]:
     global _client, _db
     try:
+        from motor.motor_asyncio import AsyncIOMotorClient  # lazy
         _client = AsyncIOMotorClient(MONGO_URL, serverSelectionTimeoutMS=3000)
         _db = _client[DB_NAME]
         # Quick ping
@@ -42,7 +43,7 @@ async def init_db() -> Optional[AsyncIOMotorDatabase]:
         return None
 
 
-def get_db() -> Optional[AsyncIOMotorDatabase]:
+def get_db() -> Optional[Any]:
     return _db
 
 
