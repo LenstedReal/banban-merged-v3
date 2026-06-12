@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { getClient } from '@/lib/api';
 import { TR, STAT_LABEL, STAT_ORDER, isPreMatchStatus } from '@/lib/i18n';
-import { AuthProvider, useAuth } from '@/components/AuthProvider';
+import { AuthProvider } from '@/components/AuthProvider';
 
 type Stats = any;
 
@@ -29,9 +29,7 @@ export default function MatchDetailClient({ home, away, initial }: { home: strin
 }
 
 function MatchDetailInner({ home, away, initial }: { home: string; away: string; initial: Stats | null }) {
-  const { user } = useAuth();
   const [data, setData] = useState<Stats | null>(initial);
-  const [myPred, setMyPred] = useState<any | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -47,19 +45,6 @@ function MatchDetailInner({ home, away, initial }: { home: string; away: string;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [home, away]);
 
-  useEffect(() => {
-    if (!user) { setMyPred(null); return; }
-    let alive = true;
-    getClient<{ items: any[] }>('/api/predictions/me').then((r) => {
-      if (!alive || !r?.items) return;
-      const found = r.items.find((p) =>
-        p.team1?.toLowerCase() === home.toLowerCase() &&
-        p.team2?.toLowerCase() === away.toLowerCase());
-      if (found) setMyPred(found);
-    });
-    return () => { alive = false; };
-  }, [home, away, user]);
-
   // Pre-match: sadece veri MEVCUT ve eps açıkça pre-match. data yok ya da
   // available=false ise pre-match diyemeyiz — "stats bulunamadı" göstereceğiz.
   const isPreMatch = data?.available ? (
@@ -70,41 +55,6 @@ function MatchDetailInner({ home, away, initial }: { home: string; away: string;
 
   return (
     <div data-testid="match-detail-client">
-      {/* TAHMİN ROZETİ */}
-      {myPred && (
-        <div data-testid="match-page-pred-badge" style={{
-          padding: '12px 20px', marginBottom: 16,
-          background: myPred.settled
-            ? (myPred.points >= 5 ? 'linear-gradient(90deg, rgba(0,255,127,0.18), rgba(0,240,255,0.12))'
-              : myPred.points >= 3 ? 'linear-gradient(90deg, rgba(0,240,255,0.15), rgba(170,0,255,0.10))'
-              : myPred.points >= 1 ? 'linear-gradient(90deg, rgba(255,170,0,0.15), rgba(255,0,170,0.08))'
-              : 'linear-gradient(90deg, rgba(120,120,120,0.15), rgba(60,60,60,0.08))')
-            : 'linear-gradient(90deg, rgba(255,0,170,0.12), rgba(0,240,255,0.08))',
-          border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8,
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ fontFamily: 'Orbitron', fontSize: 10, letterSpacing: 3, color: 'var(--text-dim)' }}>Tahminin</span>
-            <span style={{ fontFamily: 'Orbitron', fontSize: 22, color: 'var(--cyan)', letterSpacing: 2 }}>{myPred.score1}–{myPred.score2}</span>
-            {myPred.settled && myPred.final_score && (
-              <>
-                <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>vs SONUÇ</span>
-                <span style={{ fontFamily: 'Orbitron', fontSize: 18, color: '#fff' }}>{myPred.final_score[0]}–{myPred.final_score[1]}</span>
-              </>
-            )}
-          </div>
-          <div style={{ fontFamily: 'Orbitron', fontSize: 13, fontWeight: 700, letterSpacing: 2 }}>
-            {myPred.settled
-              ? (myPred.points >= 5 ? <span style={{ color: '#00ff7f', textShadow: '0 0 12px rgba(0,255,127,0.7)' }}>★ TAM SKOR · +5p</span>
-                : myPred.points >= 3 ? <span style={{ color: 'var(--cyan)' }}>✓ GOL FARKI · +3p</span>
-                : myPred.points >= 1 ? <span style={{ color: 'var(--orange, #ffa600)' }}>✓ SONUÇ · +1p</span>
-                : <span style={{ color: 'var(--text-dim)' }}>✗ KAÇIRDIN · 0p</span>)
-              : <span style={{ color: 'var(--text-dim)' }}>⏳ MAÇ BİTİNCE PUANLANACAK</span>
-            }
-          </div>
-        </div>
-      )}
-
       {/* PRE-MATCH PANEL */}
       {isPreMatch && (
         <div style={{ padding: 40, textAlign: 'center', background: 'rgba(0,0,0,0.25)', borderRadius: 10, border: '1px solid rgba(255,0,170,0.15)', marginBottom: 20 }} data-testid="match-page-pre-match">

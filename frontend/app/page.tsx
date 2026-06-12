@@ -6,7 +6,6 @@ import Header from '@/components/Header';
 import MatchBanner from '@/components/MatchBanner';
 import MatchCenter from '@/components/MatchCenter';
 import VideoPlayer from '@/components/VideoPlayer';
-import PredictionGame from '@/components/PredictionGame';
 import ChatBox from '@/components/ChatBox';
 import Sponsors from '@/components/Sponsors';
 import NotificationCenter from '@/components/NotificationCenter';
@@ -71,7 +70,6 @@ export default function HomePage() {
         <MatchCenter initialStages={todayMatches.Stages} />
 
         <VideoPlayer />
-        <PredictionGame />
         <ChatBox />
         <Sponsors />
 
