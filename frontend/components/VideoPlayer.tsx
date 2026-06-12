@@ -21,14 +21,41 @@ const CHANNELS: Channel[] = [
 ];
 
 const AD_LIBRARY = [
-  { name: 'eFootball',    src: '/ad_efootball.mp4' },
-  { name: 'PUBG Mobile',  src: '/ad_pubg.mp4' },
-  { name: 'Call of Duty', src: '/ad_cod.mp4' },
-  { name: 'Lords Mobile', src: '/ad_lords.mp4' },
+  { name: 'eFootball',    src: '/ad_efootball.mp4', store: 'https://play.google.com/store/apps/details?id=jp.konami.pesam',                       color: '#0066FF' },
+  { name: 'PUBG Mobile',  src: '/ad_pubg.mp4',      store: 'https://play.google.com/store/apps/details?id=com.tencent.ig',                       color: '#FF6600' },
+  { name: 'Call of Duty', src: '/ad_cod.mp4',       store: 'https://play.google.com/store/apps/details?id=com.activision.callofduty.shooter',    color: '#00CC44' },
+  { name: 'Lords Mobile', src: '/ad_lords.mp4',     store: 'https://play.google.com/store/apps/details?id=com.igg.android.lordsmobile',          color: '#CC0000' },
 ];
 
-const MID_ROLL_INTERVAL_SEC = 17 * 60;
-const SKIP_AFTER_SEC = 5;
+const MID_ROLL_INTERVAL_SEC = 17 * 60; // 17 dk — eski repodaki MIDROLL_INTERVAL
+const AD_MAX_DURATION_MS = 60_000;     // 60sn güvenlik limiti
+
+// Ad rotation — sessionStorage'de queue tut, her seferinde sıradakini ver
+function nextAdIndex(): number {
+  if (typeof window === 'undefined') return 0;
+  try {
+    const i = parseInt(sessionStorage.getItem('bb_adi') || '0', 10);
+    const next = (i + 1) % AD_LIBRARY.length;
+    sessionStorage.setItem('bb_adi', String(next));
+    return i % AD_LIBRARY.length;
+  } catch { return 0; }
+}
+
+// App store yönlendirme — Android Play Store / iOS App Store / Desktop yeni sekme
+function redirectToStore(url: string) {
+  if (!url) return;
+  try {
+    const ua = (navigator.userAgent || '').toLowerCase();
+    const isMobile = /android|iphone|ipad|ipod/.test(ua);
+    if (isMobile) {
+      // Mobil cihazda doğrudan store linkine git (browser tarafı app açar)
+      window.location.href = url;
+    } else {
+      // Desktop: yeni sekmede aç
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  } catch { /* noop */ }
+}
 
 type Level = { index: number; height: number; bitrate: number };
 
@@ -44,8 +71,8 @@ export default function VideoPlayer() {
   const [hasStarted, setHasStarted] = useState(false);
   const [adActive, setAdActive] = useState(false);
   const [adIndex, setAdIndex] = useState(0);
-  const [skipReady, setSkipReady] = useState(false);
-  const [adCountdown, setAdCountdown] = useState(SKIP_AFTER_SEC);
+  const [awaitingResume, setAwaitingResume] = useState(false); // Reklam bitti → kullanıcı Play'e basana kadar yayın YOK
+  const [adRemainingSec, setAdRemainingSec] = useState(0);
   const [streamError, setStreamError] = useState('');
   const [muted, setMuted] = useState(true);
   const [levels, setLevels] = useState<Level[]>([]);
@@ -58,38 +85,59 @@ export default function VideoPlayer() {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<any>(null);
   const playedTimeRef = useRef(0);
+  const adVideoRef = useRef<HTMLVideoElement>(null);
+  const adSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ===== Pre-roll on channel change =====
   useEffect(() => {
     if (!hasStarted) return;
-    setAdIndex(Math.floor(Math.random() * AD_LIBRARY.length));
-    setAdActive(true); setSkipReady(false); setAdCountdown(SKIP_AFTER_SEC);
+    // Yayın altyapısını durdur — reklam oynarken arka planda video çalışmamalı (eski repo davranışı)
+    if (hlsRef.current) { try { hlsRef.current.destroy(); } catch { /* noop */ } hlsRef.current = null; }
+    if (videoRef.current) { videoRef.current.pause(); videoRef.current.removeAttribute('src'); videoRef.current.load(); }
+    setAdIndex(nextAdIndex());
+    setAdActive(true);
+    setAwaitingResume(false);
   }, [selected.id, hasStarted]);
 
-  // ===== Skip countdown =====
+  // ===== Ad countdown + safety timer =====
   useEffect(() => {
     if (!adActive) return;
-    setSkipReady(false); setAdCountdown(SKIP_AFTER_SEC);
     const id = setInterval(() => {
-      setAdCountdown((c) => { if (c <= 1) { setSkipReady(true); clearInterval(id); return 0; } return c - 1; });
-    }, 1000);
-    return () => clearInterval(id);
+      const av = adVideoRef.current;
+      if (!av) return;
+      const dur = (isFinite(av.duration) && av.duration > 0) ? av.duration : 30;
+      const cur = av.currentTime || 0;
+      setAdRemainingSec(Math.max(0, Math.ceil(dur - cur)));
+    }, 300);
+    // Güvenlik timer: video hang olursa 60sn sonra reklamı kapat (store yönlendirme YOK çünkü tamamlanmadı)
+    if (adSafetyTimerRef.current) clearTimeout(adSafetyTimerRef.current);
+    adSafetyTimerRef.current = setTimeout(() => {
+      setAdActive(false);
+      setAwaitingResume(true);
+    }, AD_MAX_DURATION_MS);
+    return () => {
+      clearInterval(id);
+      if (adSafetyTimerRef.current) { clearTimeout(adSafetyTimerRef.current); adSafetyTimerRef.current = null; }
+    };
   }, [adActive, adIndex]);
 
-  // ===== Mid-roll timer =====
+  // ===== Mid-roll timer — sadece yayın aktifken sayar =====
   useEffect(() => {
     if (!hasStarted) return;
     const id = setInterval(() => {
-      if (adActive) return;
+      if (adActive || awaitingResume) return; // Reklam veya manuel-play bekleme sırasında zamanlayıcı çalışmaz
       playedTimeRef.current += 0.5;
       if (playedTimeRef.current >= MID_ROLL_INTERVAL_SEC) {
         playedTimeRef.current = 0;
-        setAdIndex(Math.floor(Math.random() * AD_LIBRARY.length));
+        // Yayını durdur, reklam başlat
+        if (hlsRef.current) { try { hlsRef.current.destroy(); } catch { /* noop */ } hlsRef.current = null; }
+        if (videoRef.current) { videoRef.current.pause(); videoRef.current.removeAttribute('src'); videoRef.current.load(); }
+        setAdIndex(nextAdIndex());
         setAdActive(true);
       }
     }, 500);
     return () => clearInterval(id);
-  }, [adActive, hasStarted]);
+  }, [adActive, awaitingResume, hasStarted]);
 
   // ===== Fullscreen state tracker =====
   useEffect(() => {
@@ -112,9 +160,9 @@ export default function VideoPlayer() {
     };
   }, []);
 
-  // ===== Load HLS / fallback =====
+  // ===== Load HLS / fallback — REKLAM YOKKEN VE MANUEL PLAY BEKLEME YOKKEN =====
   useEffect(() => {
-    if (adActive || !hasStarted) return;
+    if (adActive || awaitingResume || !hasStarted) return;
     setStreamError(''); setLevels([]); setCurrentLevel(-1);
     const v = videoRef.current; if (!v) return;
     if (hlsRef.current) { try { hlsRef.current.destroy(); } catch { /* noop */ }; hlsRef.current = null; }
@@ -190,7 +238,7 @@ export default function VideoPlayer() {
       cancelled = true;
       if (hlsRef.current) { try { hlsRef.current.destroy(); } catch { /* noop */ } hlsRef.current = null; }
     };
-  }, [selected.id, adActive, hasStarted]);
+  }, [selected.id, adActive, awaitingResume, hasStarted]);
 
   // ===== Controls =====
   const handlePlay = useCallback(() => {
@@ -198,7 +246,21 @@ export default function VideoPlayer() {
     if (videoRef.current) videoRef.current.muted = false;
   }, []);
 
-  const skipAd = useCallback(() => { if (skipReady) setAdActive(false); }, [skipReady]);
+  // Reklam bittikten sonra kullanıcının yayını başlatmak için bastığı manuel Play tuşu
+  const handleResume = useCallback(() => {
+    setAwaitingResume(false);
+    setMuted(false);
+    if (videoRef.current) videoRef.current.muted = false;
+  }, []);
+
+  // Reklam doğal sonuna geldi → store'a yönlendir + kullanıcıyı manuel-play ekranına al
+  const handleAdEnded = useCallback(() => {
+    const ad = AD_LIBRARY[adIndex];
+    setAdActive(false);
+    setAwaitingResume(true);
+    // Doğal bitiş = store yönlendirme (eski repo davranışı)
+    if (ad?.store) redirectToStore(ad.store);
+  }, [adIndex]);
 
   const setQuality = useCallback((idx: number) => {
     if (hlsRef.current) hlsRef.current.currentLevel = idx;
@@ -269,40 +331,87 @@ export default function VideoPlayer() {
             data-testid="video-player"
           />
 
-          {/* AD OVERLAY */}
+          {/* AD OVERLAY — SKIP YOK, kullanıcı sonuna kadar izlemek zorunda */}
           {adActive && (
             <div style={{ position: 'absolute', inset: 0, zIndex: 50 }} data-testid="ad-overlay">
               <video
+                ref={adVideoRef}
                 src={AD_LIBRARY[adIndex].src}
-                autoPlay playsInline
-                onEnded={() => setAdActive(false)}
-                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                autoPlay playsInline muted={muted}
+                onEnded={handleAdEnded}
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', background: '#000' }}
                 data-testid="ad-video"
               />
+              {/* SOL ÜST — Reklam markası */}
               <div style={{
-                position: 'absolute', top: 12, left: 12, padding: '6px 12px',
-                borderRadius: 6, background: 'rgba(0,0,0,0.7)', color: 'var(--orange, #ffa600)',
-                fontFamily: 'Orbitron', fontSize: 11, letterSpacing: 2,
-                border: '1px solid rgba(255,136,0,0.4)',
+                position: 'absolute', top: 12, left: 12, padding: '8px 14px',
+                borderRadius: 6,
+                background: `linear-gradient(135deg, ${AD_LIBRARY[adIndex].color}ee, rgba(170,0,255,0.92))`,
+                color: '#fff',
+                fontFamily: 'Orbitron, sans-serif', fontSize: 11, fontWeight: 800, letterSpacing: 3,
+                border: '1px solid rgba(255,255,255,0.45)',
+                boxShadow: `0 4px 18px rgba(0,0,0,0.5), 0 0 24px ${AD_LIBRARY[adIndex].color}80`,
+                userSelect: 'none', pointerEvents: 'none',
+                display: 'flex', alignItems: 'center', gap: 10,
               }}>
-                {TR.AD_RUNNING} · {AD_LIBRARY[adIndex].name}
+                <span style={{ width: 7, height: 7, background: '#fff', borderRadius: '50%', boxShadow: '0 0 8px #fff' }} />
+                REKLAM · {AD_LIBRARY[adIndex].name.toUpperCase()}
               </div>
+              {/* SAĞ ÜST — Geri sayım */}
+              <div style={{
+                position: 'absolute', top: 12, right: 12, padding: '8px 14px',
+                borderRadius: 6,
+                background: 'linear-gradient(90deg, rgba(8,4,14,0.88), rgba(20,8,30,0.88))',
+                border: '1px solid rgba(0,240,255,0.35)',
+                fontFamily: 'Orbitron, sans-serif', fontSize: 10, letterSpacing: 2,
+                color: '#b8e8ff',
+                display: 'flex', flexDirection: 'column', lineHeight: 1.2,
+                backdropFilter: 'blur(6px)',
+              }} data-testid="ad-countdown">
+                <span style={{ color: 'var(--cyan)', fontSize: 9, opacity: 0.75 }}>YAYIN HAZIRLANIYOR</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#fff', letterSpacing: 1.5 }}>
+                  Reklam {adRemainingSec} sn
+                </span>
+              </div>
+              {/* ALT — Atlanamaz uyarısı */}
+              <div style={{
+                position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
+                padding: '6px 14px', borderRadius: 4,
+                background: 'rgba(0,0,0,0.6)', color: 'var(--text-dim)',
+                fontFamily: 'VT323, monospace', fontSize: 12, letterSpacing: 2,
+                border: '1px solid rgba(255,255,255,0.08)',
+                pointerEvents: 'none',
+              }}>
+                Bu reklam atlanamaz — Bitmesini bekle
+              </div>
+            </div>
+          )}
+
+          {/* MANUEL PLAY — Reklam bitti, kullanıcı yayını başlatmak için butona basmalı */}
+          {!adActive && awaitingResume && hasStarted && (
+            <div className="overlay" data-testid="resume-overlay" style={{ background: 'rgba(7,7,11,0.92)', zIndex: 30 }}>
               <button
-                onClick={skipAd}
-                disabled={!skipReady}
-                style={{
-                  position: 'absolute', bottom: 16, right: 16,
-                  padding: '8px 16px', borderRadius: 6,
-                  fontFamily: 'Orbitron', letterSpacing: 2, fontSize: 12, fontWeight: 700,
-                  background: skipReady ? '#fff' : 'rgba(0,0,0,0.6)',
-                  color: skipReady ? '#000' : 'var(--text-dim)',
-                  border: `1px solid ${skipReady ? '#fff' : 'rgba(255,255,255,0.2)'}`,
-                  cursor: skipReady ? 'pointer' : 'not-allowed',
-                }}
-                data-testid="skip-ad-btn"
+                onClick={handleResume}
+                className="shelby-play-btn"
+                data-testid="resume-play-btn"
+                aria-label="Yayını başlat"
               >
-                {skipReady ? `${TR.AD_SKIP} ▶` : `${TR.AD_SKIP_IN} ${adCountdown}s`}
+                <svg width="44" height="44" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: 4 }}>
+                  <path d="M8 5v14l11-7z" />
+                </svg>
               </button>
+              <div style={{
+                marginTop: 18, color: 'var(--cyan)', fontFamily: 'Orbitron, sans-serif',
+                fontSize: 13, letterSpacing: 3, textShadow: '0 0 10px var(--cyan)',
+              }}>
+                YAYINI BAŞLATMAK İÇİN TIKLA
+              </div>
+              <div style={{
+                marginTop: 8, color: 'var(--text-dim)', fontFamily: 'VT323, monospace',
+                fontSize: 12, letterSpacing: 2,
+              }}>
+                Reklam tamamlandı · {selected.name}
+              </div>
             </div>
           )}
 
@@ -481,9 +590,15 @@ export default function VideoPlayer() {
           {CHANNELS.map((c) => (
             <button
               key={c.id}
-              onClick={() => setSelected(c)}
+              onClick={() => {
+                // Reklam veya manuel-play bekleme sırasında kanal değişimi BLOKE
+                if (adActive || awaitingResume) return;
+                setSelected(c);
+              }}
+              disabled={adActive || awaitingResume}
               data-testid={`channel-${c.id}`}
               className={`sidebar-ch-btn ${selected.id === c.id ? 'active' : ''}`}
+              style={(adActive || awaitingResume) ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
             >
               <span style={{
                 display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
