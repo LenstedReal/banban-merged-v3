@@ -223,6 +223,20 @@ export default function VideoPlayer() {
   // ===== Kanal değişince server index sıfırla =====
   useEffect(() => { setServerIndex(0); }, [selected.id]);
 
+  // ===== Global window callback — sayfa altındaki ServerSelector buradan tetikler =====
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.bbServerIndex = serverIndex;
+    window.bbServerCount = sources.length;
+    window.bbSwitchServer = (idx: number) => {
+      if (idx === serverIndex || idx >= sources.length) return;
+      networkRetryRef.current = 0;
+      stallCountRef.current = 0;
+      setFreezeOverlay(false);
+      setServerIndex(idx);
+    };
+  }, [serverIndex, sources.length]);
+
   // ===== Load HLS / fallback — REKLAM YOKKEN VE MANUEL PLAY BEKLEME YOKKEN =====
   useEffect(() => {
     if (adActive || awaitingResume || !hasStarted) return;
@@ -414,7 +428,18 @@ export default function VideoPlayer() {
   const handleResume = useCallback(() => {
     setAwaitingResume(false);
     setMuted(false);
-    if (videoRef.current) videoRef.current.muted = false;
+    const v = videoRef.current;
+    if (v) {
+      v.muted = false;
+      // Reklam sırasında v.removeAttribute('src') yapıldı — HLS effect tekrar src yükleyecek
+      // ama bazen tarayıcı kilitlenir, manuel olarak load() çağır
+      try { v.load(); } catch { /* noop */ }
+    }
+    // HLS effect bir tick sonra çalışacak; biz de play'i yedek olarak deneyelim
+    setTimeout(() => {
+      const vv = videoRef.current;
+      if (vv && vv.paused) vv.play().catch(() => { /* noop */ });
+    }, 600);
   }, []);
 
   // ===== Play/Pause — pause sonrası play'de CANLI YAYIN EDGE'ine atla =====
@@ -626,26 +651,32 @@ export default function VideoPlayer() {
 
           {/* MANUEL PLAY — Reklam bitti, kullanıcı yayını başlatmak için butona basmalı */}
           {!adActive && awaitingResume && hasStarted && (
-            <div className="overlay" data-testid="resume-overlay" style={{ background: 'rgba(7,7,11,0.92)', zIndex: 30 }}>
+            <div className="overlay" data-testid="resume-overlay" style={{
+              background: 'rgba(7,7,11,0.92)', zIndex: 30,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              gap: 0,
+            }}>
               <button
                 onClick={handleResume}
                 className="shelby-play-btn"
                 data-testid="resume-play-btn"
                 aria-label="Yayını başlat"
+                style={{ marginBottom: 28 }}
               >
                 <svg width="44" height="44" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: 4 }}>
                   <path d="M8 5v14l11-7z" />
                 </svg>
               </button>
               <div style={{
-                marginTop: 18, color: 'var(--cyan)', fontFamily: 'Orbitron, sans-serif',
+                color: 'var(--cyan)', fontFamily: 'Orbitron, sans-serif',
                 fontSize: 13, letterSpacing: 3, textShadow: '0 0 10px var(--cyan)',
+                textAlign: 'center', padding: '0 20px',
               }}>
                 YAYINI BAŞLATMAK İÇİN TIKLA
               </div>
               <div style={{
-                marginTop: 8, color: 'var(--text-dim)', fontFamily: 'VT323, monospace',
-                fontSize: 12, letterSpacing: 2,
+                marginTop: 10, color: 'var(--text-dim)', fontFamily: 'VT323, monospace',
+                fontSize: 12, letterSpacing: 2, textAlign: 'center', padding: '0 20px',
               }}>
                 Reklam tamamlandı · {selected.name}
               </div>
@@ -772,38 +803,6 @@ export default function VideoPlayer() {
                 </button>
               </div>
               <div className="controls-right" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                {/* SUNUCU SEÇİCİ — eski repo tarzı, kanalın yedek sunucuları varsa görünür */}
-                {sources.length > 1 && (
-                  <div data-testid="server-selector" style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                    <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: 9, color: 'var(--text-dim)', letterSpacing: 1.5, marginRight: 4 }}>SUNUCU</span>
-                    {sources.map((_, idx) => (
-                      <button
-                        key={idx}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (idx === serverIndex) return;
-                          networkRetryRef.current = 0;
-                          stallCountRef.current = 0;
-                          setFreezeOverlay(false);
-                          setServerIndex(idx);
-                        }}
-                        data-testid={`server-${idx}`}
-                        title={`Sunucu ${idx + 1}`}
-                        style={{
-                          width: 26, height: 26, borderRadius: 4,
-                          background: idx === serverIndex ? 'linear-gradient(135deg, var(--cyan, #00f0ff), var(--pink, #ff00aa))' : 'rgba(0,0,0,0.5)',
-                          color: idx === serverIndex ? '#000' : 'var(--cyan, #00f0ff)',
-                          border: `1px solid ${idx === serverIndex ? 'var(--pink, #ff00aa)' : 'rgba(0,240,255,0.3)'}`,
-                          fontFamily: 'Orbitron, sans-serif', fontSize: 11, fontWeight: 800,
-                          cursor: 'pointer', padding: 0,
-                          boxShadow: idx === serverIndex ? '0 0 10px var(--pink, #ff00aa)' : 'none',
-                        }}
-                      >
-                        {idx + 1}
-                      </button>
-                    ))}
-                  </div>
-                )}
                 {/* QUALITY SELECTOR */}
                 {levels.length > 1 && (
                   <div className="quality-selector" data-testid="quality-selector" style={{ position: 'relative' }}>

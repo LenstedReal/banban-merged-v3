@@ -1,4 +1,15 @@
+'use client';
 /* Sponsors + footer — uses original .sponsors-grid, .sponsor-item.sp-* classes */
+import { useEffect, useState } from 'react';
+
+declare global {
+  interface Window {
+    bbSwitchServer?: (idx: number) => void;
+    bbServerIndex?: number;
+    bbServerCount?: number;
+  }
+}
+
 const SPONSORS = [
   { id: 'redbull',    href: 'https://www.redbull.com/tr-tr/',                klass: 'sp-redbull',     img: '/logos/redbull_ref.png?v=31',         alt: 'Red Bull' },
   { id: 'samsung',    href: 'https://www.samsung.com/tr/smartphones/galaxy/', klass: 'sp-samsung',     img: '/logos/samsung_galaxy.png?v=31',     alt: 'Samsung Galaxy' },
@@ -27,6 +38,23 @@ const SPONSORS = [
 ];
 
 export default function SponsorsFooter() {
+  const [activeServer, setActiveServer] = useState(0);
+  const [serverCount, setServerCount] = useState(1);
+  useEffect(() => {
+    const tick = () => {
+      setActiveServer(window.bbServerIndex ?? 0);
+      setServerCount(window.bbServerCount ?? 1);
+    };
+    tick();
+    const id = setInterval(tick, 700);
+    return () => clearInterval(id);
+  }, []);
+  const handleServerClick = (i: number) => {
+    if (i >= serverCount) return;
+    if (typeof window.bbSwitchServer === 'function') {
+      window.bbSwitchServer(i);
+    }
+  };
   return (
     <footer className="footer" data-testid="footer">
       <div className="sponsors-section">
@@ -56,18 +84,33 @@ export default function SponsorsFooter() {
         <div className="server-title">SUNUCULAR</div>
         <div className="server-grid">
           {[
-            { i:0, name:'Sunucu 1 (TR)',    cls:'online' },
-            { i:1, name:'Sunucu 2 (Yedek)', cls:'online' },
-            { i:2, name:'Sunucu 3 (EU)',    cls:'online' },
-            { i:3, name:'Sunucu 4',         cls:'' },
-            { i:4, name:'Sunucu 5',         cls:'' },
-            { i:5, name:'Sunucu 6',         cls:'' },
-          ].map(s => (
-            <div key={s.i} className={`server-item ${s.i === 0 ? 'active' : ''}`} data-testid={`server-${s.i}`}>
-              <span>{s.name}</span>
-              <span className={`server-status ${s.cls}`}></span>
-            </div>
-          ))}
+            { i:0, name:'Sunucu 1 (TR)' },
+            { i:1, name:'Sunucu 2 (Yedek)' },
+            { i:2, name:'Sunucu 3 (EU)' },
+            { i:3, name:'Sunucu 4' },
+            { i:4, name:'Sunucu 5' },
+            { i:5, name:'Sunucu 6' },
+          ].map(s => {
+            const usable = s.i < serverCount;
+            const isActive = usable && s.i === activeServer;
+            return (
+              <div
+                key={s.i}
+                className={`server-item ${isActive ? 'active' : ''}`}
+                data-testid={`server-${s.i}`}
+                onClick={() => handleServerClick(s.i)}
+                style={{
+                  cursor: usable ? 'pointer' : 'not-allowed',
+                  opacity: usable ? 1 : 0.4,
+                }}
+              >
+                <span>{s.name}</span>
+                <span className={`server-status ${usable ? 'online' : ''}`}></span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
         </div>
       </div>
     </footer>
