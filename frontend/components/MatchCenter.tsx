@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { getClient } from '@/lib/api';
-import MatchStatsModal from './MatchStatsModal';
 import { TR } from '@/lib/i18n';
 
 type Event = {
@@ -99,7 +99,6 @@ const epsToLabel = (e: Event) => {
 export default function MatchCenter({ initialStages }: { initialStages: Stage[] }) {
   const [stages, setStages] = useState<Stage[]>(initialStages);
   const [filter, setFilter] = useState('all');
-  const [openMatch, setOpenMatch] = useState<{ home: string; away: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const stagesRef = useRef<Stage[]>(initialStages);
 
@@ -148,6 +147,8 @@ export default function MatchCenter({ initialStages }: { initialStages: Stage[] 
 
   const flatMatches = useMemo(() => {
     const out: { home: string; away: string; league: string; status: string; live: boolean; finished: boolean; notStarted: boolean; score1: number; score2: number; pen1?: number | null; pen2?: number | null; slug: string }[] = [];
+    // Preserve Turkish/unicode letters in slug (only collapse whitespace and special punctuation to _)
+    const cleanName = (s: string) => s.replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '');
     visible.forEach((s) => {
       (s.Events || []).forEach((e) => {
         const t1 = e.T1?.[0]?.Nm || '—';
@@ -155,7 +156,7 @@ export default function MatchCenter({ initialStages }: { initialStages: Stage[] 
         const ep = epsToLabel(e);
         const esd = String(e.Esd || '');
         const date = esd.length >= 8 ? esd.slice(0, 8) : '';
-        const slug = `${t1.replace(/[^a-zA-Z0-9]+/g, '_')}__${t2.replace(/[^a-zA-Z0-9]+/g, '_')}${date ? '__' + date : ''}`;
+        const slug = `${cleanName(t1)}__${cleanName(t2)}${date ? '__' + date : ''}`;
         out.push({
           home: t1, away: t2,
           league: s.Snm || s.Cnm || '',
@@ -199,30 +200,26 @@ export default function MatchCenter({ initialStages }: { initialStages: Stage[] 
             {emptyMessage}
           </div>
         ) : flatMatches.slice(0, 24).map((m, i) => (
-          <div
+          <Link
             key={`${m.home}-${m.away}-${i}`}
+            href={`/match/${encodeURIComponent(m.slug)}`}
             className="match-card"
             data-testid={`match-row-${i}`}
-            onClick={() => setOpenMatch({ home: m.home, away: m.away })}
-            style={{ cursor: 'pointer', position: 'relative' }}
+            style={{ cursor: 'pointer', position: 'relative', display: 'block', textDecoration: 'none', color: 'inherit' }}
           >
-            <a
-              href={`/match/${m.slug}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
+            <div
               data-testid={`match-detail-link-${i}`}
               style={{
                 position: 'absolute', top: 6, right: 8,
                 fontSize: 9, color: 'var(--text-dim)', letterSpacing: 1,
-                textDecoration: 'none', padding: '2px 6px',
+                padding: '2px 6px',
                 border: '1px solid rgba(255,255,255,0.08)', borderRadius: 4,
                 fontFamily: 'Orbitron, sans-serif',
               }}
-              title="Detay sayfasını yeni sekmede aç"
+              title="Maç detayı"
             >
               ↗ DETAY
-            </a>
+            </div>
             <div className="match-card-league">{m.league.toUpperCase()}</div>
             <div className="match-card-teams">
               <div className="match-card-team">{m.home}</div>
@@ -240,10 +237,9 @@ export default function MatchCenter({ initialStages }: { initialStages: Stage[] 
               {m.live && <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', boxShadow: '0 0 6px var(--green)', marginRight: 6, verticalAlign: 'middle' }} />}
               {m.status}
             </div>
-          </div>
+          </Link>
         ))}
       </div>
-      {openMatch && <MatchStatsModal home={openMatch.home} away={openMatch.away} onClose={() => setOpenMatch(null)} />}
     </div>
   );
 }

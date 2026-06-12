@@ -77,23 +77,23 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
         </Link>
         <div style={{ fontFamily: 'VT323, monospace', color: 'var(--text-dim)', letterSpacing: 2, fontSize: 11 }}>MAÇ DETAYI</div>
       </header>
-      <main style={{ maxWidth: 1100, margin: '0 auto', padding: '20px' }} data-testid="match-detail-page">
+      <main style={{ maxWidth: 1100, margin: '0 auto', padding: 'clamp(10px, 3vw, 20px)' }} data-testid="match-detail-page">
         {/* SSR header block — instant content, SEO ready */}
         <div style={{
           background: 'linear-gradient(180deg, rgba(255,0,170,0.08), rgba(0,240,255,0.04))',
           border: '1px solid rgba(255,0,170,0.2)',
-          borderRadius: 12, padding: '24px 30px', marginBottom: 20,
+          borderRadius: 12, padding: 'clamp(14px, 3vw, 24px) clamp(14px, 3vw, 30px)', marginBottom: 20,
         }}>
           {m?.league && (
             <div style={{ fontFamily: 'Orbitron, sans-serif', fontSize: 11, letterSpacing: 3, color: 'var(--cyan, #00f0ff)', textAlign: 'center', marginBottom: 14 }} data-testid="match-league">
               {m.league.toUpperCase()}
             </div>
           )}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 16 }}>
-            <div style={{ textAlign: 'right' }}>
-              <h1 style={{ fontFamily: 'Orbitron, sans-serif', fontSize: 28, letterSpacing: 2, color: '#fff', margin: 0 }} data-testid="match-home">{home}</h1>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 'clamp(8px, 2vw, 16px)' }}>
+            <div style={{ textAlign: 'right', minWidth: 0 }}>
+              <h1 style={{ fontFamily: 'Orbitron, sans-serif', fontSize: 'clamp(15px, 4vw, 28px)', letterSpacing: 1, color: '#fff', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis' }} data-testid="match-home">{home}</h1>
             </div>
-            <div style={{ textAlign: 'center', fontFamily: 'Orbitron, sans-serif', fontSize: 48, color: 'var(--cyan, #00f0ff)', textShadow: '0 0 14px rgba(0,240,255,0.5)', letterSpacing: 4 }} data-testid="match-score">
+            <div style={{ textAlign: 'center', fontFamily: 'Orbitron, sans-serif', fontSize: 'clamp(28px, 7vw, 48px)', color: 'var(--cyan, #00f0ff)', textShadow: '0 0 14px rgba(0,240,255,0.5)', letterSpacing: 'clamp(2px, 0.5vw, 4px)', whiteSpace: 'nowrap' }} data-testid="match-score">
               {m?.score ? `${m.score.home}–${m.score.away}` : 'vs'}
               {m?.score?.pen_home != null && (
                 <div style={{ fontSize: 13, color: 'var(--orange, #ffa600)', marginTop: 6, letterSpacing: 2 }}>
@@ -101,8 +101,8 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
                 </div>
               )}
             </div>
-            <div style={{ textAlign: 'left' }}>
-              <h1 style={{ fontFamily: 'Orbitron, sans-serif', fontSize: 28, letterSpacing: 2, color: '#fff', margin: 0 }} data-testid="match-away">{away}</h1>
+            <div style={{ textAlign: 'left', minWidth: 0 }}>
+              <h1 style={{ fontFamily: 'Orbitron, sans-serif', fontSize: 'clamp(15px, 4vw, 28px)', letterSpacing: 1, color: '#fff', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis' }} data-testid="match-away">{away}</h1>
             </div>
           </div>
           {m?.eps && (
