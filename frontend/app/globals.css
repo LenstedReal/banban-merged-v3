@@ -727,7 +727,17 @@
         .video-fps-counter.warn { color: var(--orange); border-color: rgba(255,136,0,0.55); text-shadow: 0 0 5px rgba(255,136,0,0.7); }
         .video-fps-counter.crit { color: var(--red);    border-color: rgba(255,0,64,0.6);   text-shadow: 0 0 5px rgba(255,0,64,0.7); }
         .video-fps-counter small { display: block; font-size: 7px; opacity: 0.65; letter-spacing: 1.5px; margin-top: 0; }
-        /* Kanal sidebar */
+        /* Kanal sidebar — DEFAULT (geniş masaüstü) görünüm: sağda dikey */
+        .channel-sidebar {
+            width: 180px;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            overflow-y: auto;
+            max-height: calc((100vw - 220px) * 9 / 16);
+            padding: 4px 0;
+        }
         .sidebar-ch-btn {
             display: block; width: 100%; padding: 8px 10px;
             background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
@@ -739,32 +749,40 @@
         .sidebar-ch-btn:hover { background: rgba(0,240,255,0.08); border-color: var(--cyan); color: var(--cyan); }
         .sidebar-ch-btn.active { background: linear-gradient(90deg, rgba(255,0,170,0.15), rgba(0,240,255,0.08)); border-color: var(--pink); color: #fff; }
         .sidebar-ch-btn .ch-badge { position: absolute; top: 2px; right: 4px; font-size: 8px; color: #0f0; }
-        @media (max-width: 900px) {
-            .channel-sidebar { display: none !important; }
-            .player-layout { flex-direction: column !important; }
-        }
-        /* Mobile in desktop-mode (touch device regardless of viewport width):
-           keep channels visible but stack below video as horizontal scrollable strip */
-        @media (hover: none) and (pointer: coarse) and (min-width: 901px) {
+        /* ======== KANAL LİSTESİ — RESPONSIVE ========
+           Strateji:
+           • Geniş masaüstü (>= 1100px, mouse): SAĞDA dikey sidebar
+           • Diğer her durum (mobil + mobil-masaüstü modu + tablet + dokunmatik):
+             Video ALTINDA yatay kaydırılabilir şerit — ASLA gizlenmez. */
+        @media (max-width: 1099px), (hover: none), (pointer: coarse) {
             .player-layout {
                 flex-direction: column !important;
-                gap: 8px !important;
+                gap: 10px !important;
+                align-items: stretch !important;
             }
             .channel-sidebar {
+                display: flex !important;
                 width: 100% !important;
                 max-height: none !important;
+                height: auto !important;
                 flex-direction: row !important;
                 overflow-x: auto !important;
                 overflow-y: hidden !important;
-                gap: 6px !important;
+                gap: 8px !important;
                 padding: 8px 4px !important;
                 scrollbar-width: thin;
+                scrollbar-color: var(--pink) transparent;
+                -webkit-overflow-scrolling: touch;
             }
+            .channel-sidebar::-webkit-scrollbar { height: 6px; }
+            .channel-sidebar::-webkit-scrollbar-thumb { background: var(--pink); border-radius: 3px; }
             .channel-sidebar .sidebar-ch-btn {
                 flex: 0 0 auto !important;
-                min-width: 130px !important;
-                padding: 10px 12px !important;
+                min-width: 140px !important;
+                max-width: 200px !important;
+                padding: 12px 14px !important;
                 font-size: 14px !important;
+                text-align: center !important;
             }
         }
         /* Smooth scroll for whole page (respects reduced-motion) */

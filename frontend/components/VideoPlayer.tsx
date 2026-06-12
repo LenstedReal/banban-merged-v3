@@ -473,21 +473,10 @@ export default function VideoPlayer() {
           )}
         </div>
 
-        {/* CHANNEL SIDEBAR — video'nun SAĞ YANINDA (eski repo layout) */}
+        {/* CHANNEL SIDEBAR — desktopta SAĞ YANDA, mobilde video ALTINDA yatay kaydırmalı */}
         <div
           className="channel-sidebar"
           data-testid="channel-sidebar"
-          style={{
-            width: 180,
-            flexShrink: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 4,
-            overflowY: 'auto',
-            // Video aspect-ratio 16:9 → sidebar height eşleşsin
-            maxHeight: 'calc((100vw - 220px) * 9 / 16)',
-            padding: '4px 0',
-          }}
         >
           {CHANNELS.map((c) => (
             <button
