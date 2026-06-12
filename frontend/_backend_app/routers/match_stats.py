@@ -218,14 +218,26 @@ async def get_match_stats(home: str, away: str, date: Optional[str] = None):
 
 
 # ============== Match detail by slug ==============
-@router.get("/by-slug/{slug}")
+@router.get("/by-slug/{slug:path}")
 async def get_match_by_slug(slug: str):
     """Slug format: team1__team2__YYYYMMDD (örn: galatasaray__fenerbahce__20260601).
-    Match detail sayfası için SSR ile çağrılır."""
-    parts = slug.split("__")
+    Türkçe karakterler hem ham (Güney_Kore) hem percent-encoded (G%C3%BCney_Kore)
+    olarak gelebilir. Her iki durumu da güvenli şekilde çözeriz."""
+    from urllib.parse import unquote
+    try:
+        decoded = unquote(slug)
+        # Eğer hâlâ %XX içeriyorsa çift encode olmuş demektir
+        if "%" in decoded:
+            try:
+                decoded = unquote(decoded)
+            except Exception:
+                pass
+    except Exception:
+        decoded = slug
+    parts = decoded.split("__")
     if len(parts) < 2:
         return {"available": False, "message": "Geçersiz slug"}
-    home = parts[0].replace("_", " ")
-    away = parts[1].replace("_", " ")
+    home = parts[0].replace("_", " ").strip()
+    away = parts[1].replace("_", " ").strip()
     date = parts[2] if len(parts) >= 3 else None
     return await get_match_stats(home=home, away=away, date=date)

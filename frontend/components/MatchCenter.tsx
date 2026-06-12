@@ -202,7 +202,7 @@ export default function MatchCenter({ initialStages }: { initialStages: Stage[] 
         ) : flatMatches.slice(0, 24).map((m, i) => (
           <Link
             key={`${m.home}-${m.away}-${i}`}
-            href={`/match/${encodeURIComponent(m.slug)}`}
+            href={`/match/${m.slug}`}
             className="match-card"
             data-testid={`match-row-${i}`}
             style={{ cursor: 'pointer', position: 'relative', display: 'block', textDecoration: 'none', color: 'inherit' }}

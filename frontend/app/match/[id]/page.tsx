@@ -21,14 +21,19 @@ type MatchStats = {
 
 async function fetchMatch(slug: string): Promise<MatchStats | null> {
   try {
-    return await getServer<MatchStats>(`/api/match/by-slug/${slug}`);
+    // Slug may arrive percent-encoded; backend expects raw UTF-8 in path
+    const decoded = (() => { try { return decodeURIComponent(slug); } catch { return slug; } })();
+    return await getServer<MatchStats>(`/api/match/by-slug/${encodeURIComponent(decoded)}`);
   } catch {
     return null;
   }
 }
 
 function decodeSlug(slug: string): { home: string; away: string; date: string } {
-  const parts = slug.split('__');
+  // Accept both raw and percent-encoded slugs
+  let s = slug;
+  try { s = decodeURIComponent(slug); } catch {}
+  const parts = s.split('__');
   return {
     home: (parts[0] || '').replace(/_/g, ' '),
     away: (parts[1] || '').replace(/_/g, ' '),
