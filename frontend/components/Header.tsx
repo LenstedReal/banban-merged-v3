@@ -2,7 +2,6 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from './AuthProvider';
-import AuthButton from './AuthButton';
 
 export default function Header() {
   const { user } = useAuth();
@@ -64,7 +63,6 @@ export default function Header() {
             <span>BİLDİRİM</span>
             <span className="notif-status">{notifOn ? 'AÇIK' : 'KAPALI'}</span>
           </button>
-          <AuthButton />
         </div>
       </div>
     </header>

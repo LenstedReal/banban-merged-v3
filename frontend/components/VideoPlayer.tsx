@@ -7,13 +7,37 @@ type Channel = { id: string; name: string; status: 'online' | 'maintenance' | 'c
 // CORS bypass — m3u8'leri backend proxy üzerinden ver (eski repo davranışı)
 const proxify = (url: string) => `/api/stream/proxy?url=${encodeURIComponent(url)}`;
 
+// Her kanal için yedek sunucu listesi (eski repodaki SERVER_ALTERNATIVES mantığı)
+// 1. seçenek başarısız olursa otomatik 2., 3. denenir
+const CHANNEL_SOURCES: Record<string, string[]> = {
+  trt1: [
+    proxify('https://tv-trt1.medya.trt.com.tr/master.m3u8'),
+    proxify('https://tv-trt1.medya.trt.com.tr/master_1080.m3u8'),
+    proxify('https://tv-trt1.medya.trt.com.tr/master_720.m3u8'),
+  ],
+  trthaber: [
+    proxify('https://tv-trthaber.medya.trt.com.tr/master.m3u8'),
+    proxify('https://tv-trthaber.medya.trt.com.tr/master_720.m3u8'),
+  ],
+  trtspor: [
+    proxify('https://tv-trtspor1.medya.trt.com.tr/master.m3u8'),
+    proxify('https://tv-trtspor1.medya.trt.com.tr/master_720.m3u8'),
+  ],
+  tv8: [
+    proxify('https://tv8.daioncdn.net/tv8/tv8.m3u8?app=7ddc255a-ef47-4e81-ab14-c0e5f2949788&ce=3'),
+    proxify('https://tv8.daioncdn.net/tv8/tv8.m3u8'),
+  ],
+  spiderman: ['/spiderman_trailer.mp4'],
+  bein1: ['/api/bein1/stream.m3u8'],
+};
+
 const CHANNELS: Channel[] = [
   { id: 'fastx',     name: 'HIZLI VE ÖFKELİ 11', status: 'coming_soon', badge: 'YAKINDA' },
   { id: 'spiderman', name: 'SPIDER-MAN: BND',    status: 'online',      src: '/spiderman_trailer.mp4', badge: 'NEW' },
-  { id: 'trt1',      name: 'TRT 1',              status: 'online',      src: proxify('https://tv-trt1.medya.trt.com.tr/master.m3u8') },
-  { id: 'trthaber',  name: 'TRT HABER',          status: 'online',      src: proxify('https://tv-trthaber.medya.trt.com.tr/master.m3u8') },
-  { id: 'tv8',       name: 'TV 8',               status: 'online',      src: proxify('https://tv8.daioncdn.net/tv8/tv8.m3u8?app=7ddc255a-ef47-4e81-ab14-c0e5f2949788&ce=3') },
-  { id: 'trtspor',   name: 'TRT SPOR',           status: 'online',      src: proxify('https://tv-trtspor1.medya.trt.com.tr/master.m3u8') },
+  { id: 'trt1',      name: 'TRT 1',              status: 'online',      src: CHANNEL_SOURCES.trt1[0] },
+  { id: 'trthaber',  name: 'TRT HABER',          status: 'online',      src: CHANNEL_SOURCES.trthaber[0] },
+  { id: 'tv8',       name: 'TV 8',               status: 'online',      src: CHANNEL_SOURCES.tv8[0] },
+  { id: 'trtspor',   name: 'TRT SPOR',           status: 'online',      src: CHANNEL_SOURCES.trtspor[0] },
   { id: 'bein1',     name: 'beIN SPORTS 1',      status: 'maintenance', premium: true, src: '/api/bein1/stream.m3u8' },
   { id: 'bein2',     name: 'beIN SPORTS 2',      status: 'maintenance', premium: true },
   { id: 'ssport',    name: 'S SPORT',            status: 'maintenance', premium: true },
@@ -71,6 +95,7 @@ const qualityLabel = (h: number): string => {
 
 export default function VideoPlayer() {
   const [selected, setSelected] = useState<Channel>(CHANNELS[2]); // TRT 1 default
+  const [serverIndex, setServerIndex] = useState(0);
   const [hasStarted, setHasStarted] = useState(false);
   const [adActive, setAdActive] = useState(false);
   const [adIndex, setAdIndex] = useState(0);
