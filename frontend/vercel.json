@@ -6,6 +6,17 @@
   "outputDirectory": ".next",
   "devCommand": "yarn dev",
   "regions": ["fra1"],
+  "functions": {
+    "api/index.py": {
+      "runtime": "@vercel/python@4.3.0",
+      "memory": 1024,
+      "maxDuration": 30,
+      "includeFiles": "_backend_app/**"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/index" }
+  ],
   "headers": [
     {
       "source": "/icons/(.*)",

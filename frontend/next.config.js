@@ -1,13 +1,9 @@
 /** @type {import('next').NextConfig} */
 
+// NOTE: On Vercel, /api/* is routed by vercel.json directly to the Python
+// serverless function (api/index.py). NEXT_PUBLIC_BACKEND_URL is only used
+// when running locally (next dev) to proxy to a separate FastAPI dev server.
 const backend = process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || '';
-
-if (!backend && process.env.NODE_ENV === 'production') {
-  console.warn(
-    '\n⚠️  [BANBAN] WARNING: NEXT_PUBLIC_BACKEND_URL is not set!\n' +
-    'API calls to /api/* will fail on production.\n'
-  );
-}
 
 const nextConfig = {
   reactStrictMode: true,
@@ -28,10 +24,10 @@ const nextConfig = {
     scrollRestoration: true,
   },
 
-  // API Rewrites (Backend yönlendirmesi)
+  // Local dev only: proxy /api/* to local FastAPI server.
+  // In production on Vercel, vercel.json rewrites handle this instead.
   async rewrites() {
     if (!backend) return [];
-
     return [
       {
         source: '/api/:path*',
