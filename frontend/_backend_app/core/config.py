@@ -17,12 +17,21 @@ def _required(key: str) -> str:
     return val
 
 
+def _auto(key: str, default_generator) -> str:
+    """Return env value or auto-generate a sensible default (for optional auth features)."""
+    val = os.environ.get(key, '').strip()
+    return val or default_generator()
+
+
 # --- Required (fail-fast if missing) ---
 MONGO_URL = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
 DB_NAME = os.environ.get('DB_NAME', 'banbansports')
-JWT_SECRET = _required('JWT_SECRET')
+# JWT secret and admin password auto-generate if missing so the app can boot
+# (scores work without auth). Set them in your deploy env to enable login/admin.
+import secrets as _secrets
+JWT_SECRET = _auto('JWT_SECRET', lambda: _secrets.token_urlsafe(48))
 ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'admin@banbansports.local').strip().lower()
-ADMIN_PASSWORD = _required('ADMIN_PASSWORD')
+ADMIN_PASSWORD = _auto('ADMIN_PASSWORD', lambda: _secrets.token_urlsafe(16))
 
 # --- Optional ---
 CORS_ORIGINS = [o.strip() for o in os.environ.get('CORS_ORIGINS', '').split(',') if o.strip()]
