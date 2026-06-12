@@ -568,8 +568,13 @@ export default function VideoPlayer() {
             className="video-player"
             playsInline
             muted={muted}
+            /* TARAYICI NATIVE KONTROLLERİNİ KAPAT — cast/play/PiP/fullscreen */
+            controls={false}
+            // @ts-ignore
+            disableRemotePlayback
+            disablePictureInPicture
+            controlsList="nodownload nofullscreen noremoteplayback"
             onClick={() => { if (hasStarted && !adActive && !awaitingResume && !streamError) togglePlay(); }}
-            // controls={false} — KENDİ control bar'ımız var (eski repo tarzı)
             style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000', cursor: hasStarted && !adActive && !awaitingResume ? 'pointer' : 'default' }}
             data-testid="video-player"
           />
@@ -607,10 +612,15 @@ export default function VideoPlayer() {
                 autoPlay playsInline muted={muted}
                 onEnded={handleAdEnded}
                 onError={() => {
-                  // Reklam yüklenemedi → kullanıcıyı manuel-play ekranına al (store yönlendirme YOK)
                   setAdActive(false);
                   setAwaitingResume(true);
                 }}
+                /* TARAYICI NATIVE KONTROLLERİNİ KAPAT — cast/play/PiP/fullscreen */
+                controls={false}
+                // @ts-ignore — non-standard but widely supported
+                disableRemotePlayback
+                disablePictureInPicture
+                controlsList="nodownload nofullscreen noremoteplayback"
                 style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
                 data-testid="ad-video"
               />

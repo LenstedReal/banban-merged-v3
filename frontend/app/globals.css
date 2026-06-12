@@ -1173,3 +1173,30 @@
     0%, 100% { opacity: 1; }
     50% { opacity: 0.45; }
 }
+
+/* ============== NATIVE VIDEO KONTROLLERİNİ TAMAMEN GİZLE ============== */
+/* Mobil tarayıcılar (Chrome Android, Safari iOS) bazen otomatik native cast/play
+   butonları gösterir. Hepsini gizle — kendi custom UI'mız var. */
+video::-webkit-media-controls,
+video::-webkit-media-controls-panel,
+video::-webkit-media-controls-play-button,
+video::-webkit-media-controls-volume-slider,
+video::-webkit-media-controls-mute-button,
+video::-webkit-media-controls-timeline,
+video::-webkit-media-controls-current-time-display,
+video::-webkit-media-controls-time-remaining-display,
+video::-webkit-media-controls-fullscreen-button,
+video::-webkit-media-controls-toggle-closed-captions-button,
+video::-webkit-media-controls-overlay-cast-button,
+video::-internal-media-controls-overlay-cast-button,
+video::-internal-media-controls-button-panel,
+video::-webkit-media-controls-overlay-play-button {
+    display: none !important;
+    -webkit-appearance: none !important;
+    appearance: none !important;
+    opacity: 0 !important;
+}
+video {
+    -webkit-tap-highlight-color: transparent;
+}
+
