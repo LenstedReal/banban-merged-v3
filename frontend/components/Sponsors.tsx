@@ -111,8 +111,6 @@ export default function SponsorsFooter() {
           })}
         </div>
       </div>
-        </div>
-      </div>
     </footer>
   );
 }
