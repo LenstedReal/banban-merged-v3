@@ -122,7 +122,7 @@ function MatchDetailInner({ home, away, initial }: { home: string; away: string;
 
       {data?.sources && data.sources.length > 0 && (
         <div style={{ textAlign: 'center', marginTop: 20, fontSize: 9, color: 'var(--text-dim)', letterSpacing: 2 }}>
-          {TR.STATS_SOURCES} · {data.sources.map((s: string) => s.toUpperCase()).join(' + ')}
+          {TR.STATS_SOURCES} · SOFASCORE
         </div>
       )}
     </div>

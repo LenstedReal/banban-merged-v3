@@ -364,7 +364,7 @@ export default function MatchStatsModal({ home, away, onClose }: { home: string;
             padding: '10px 30px 20px', textAlign: 'center',
             fontSize: 9, color: 'var(--text-dim)', letterSpacing: 2, fontFamily: 'VT323, monospace',
           }} data-testid="stats-sources">
-            {TR.STATS_SOURCES} · {data.sources.map((s) => s.toUpperCase()).join(' + ')}
+            {TR.STATS_SOURCES} · SOFASCORE
           </div>
         )}
       </div>
