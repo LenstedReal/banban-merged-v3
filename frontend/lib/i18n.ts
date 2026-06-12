@@ -59,10 +59,10 @@ export const TR = {
   AD_SKIP: 'REKLAMI ATLA',
   AD_SKIP_IN: 'ATLA',
   BROADCAST_STARTING: 'YAYIN BAŞLIYOR…',
-  STREAM_UNAVAILABLE: 'Yayın şu anda kullanılamıyor.',
-  CHANNEL_MAINTENANCE: 'Bu kanal şu anda bakımda. Yakında geri gelecek.',
-  CHANNEL_COMING_SOON: 'YAKINDA — takipte kal.',
-  CHANNEL_NO_SOURCE: 'Yayın kaynağı henüz tanımlanmamış.',
+  STREAM_UNAVAILABLE: 'Yayın şu anda aktif değil',
+  CHANNEL_MAINTENANCE: 'Yayın şu anda aktif değil',
+  CHANNEL_COMING_SOON: 'YAKINDA — takipte kal',
+  CHANNEL_NO_SOURCE: 'Yayın şu anda aktif değil',
 
   // Bildirim
   NOTIFICATIONS: 'BİLDİRİMLER',

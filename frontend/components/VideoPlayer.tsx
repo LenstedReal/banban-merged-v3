@@ -87,10 +87,12 @@ function redirectToStore(url: string) {
 type Level = { index: number; height: number; bitrate: number };
 
 const qualityLabel = (h: number): string => {
-  if (h >= 1440) return `${h}p QHD`;
-  if (h >= 1080) return '1080p HD';
-  if (h >= 720) return '720p HD';
-  return `${h}p`;
+  if (h >= 2160) return '4K';
+  if (h >= 1440) return '1440p';
+  if (h >= 1080) return '1080p';
+  if (h >= 720) return '720p';
+  if (h >= 480) return '480p';
+  return '360p';
 };
 
 export default function VideoPlayer() {
@@ -108,6 +110,7 @@ export default function VideoPlayer() {
   const [qualityOpen, setQualityOpen] = useState(false);
   const [isPip, setIsPip] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -203,13 +206,20 @@ export default function VideoPlayer() {
     };
   }, []);
 
+  // ===== Mevcut yayın URL'i — server failover destekli =====
+  const sources = CHANNEL_SOURCES[selected.id] || (selected.src ? [selected.src] : []);
+  const activeSrc = sources[serverIndex] || sources[0] || selected.src || '';
+
+  // ===== Kanal değişince server index sıfırla =====
+  useEffect(() => { setServerIndex(0); }, [selected.id]);
+
   // ===== Load HLS / fallback — REKLAM YOKKEN VE MANUEL PLAY BEKLEME YOKKEN =====
   useEffect(() => {
     if (adActive || awaitingResume || !hasStarted) return;
     setStreamError(''); setLevels([]); setCurrentLevel(-1);
     const v = videoRef.current; if (!v) return;
     if (hlsRef.current) { try { hlsRef.current.destroy(); } catch { /* noop */ }; hlsRef.current = null; }
-    if (!selected.src || selected.status === 'maintenance' || selected.status === 'coming_soon') {
+    if (!activeSrc || selected.status === 'maintenance' || selected.status === 'coming_soon') {
       v.removeAttribute('src'); v.load();
       if (selected.status === 'maintenance') setStreamError(TR.CHANNEL_MAINTENANCE);
       else if (selected.status === 'coming_soon') setStreamError(TR.CHANNEL_COMING_SOON);
@@ -220,7 +230,7 @@ export default function VideoPlayer() {
     (async () => {
       // Native HLS (Safari) → doğrudan src
       if (v.canPlayType('application/vnd.apple.mpegurl')) {
-        v.src = selected.src!;
+        v.src = activeSrc;
         try { await v.play(); } catch { /* noop */ }
         return;
       }
@@ -230,18 +240,22 @@ export default function VideoPlayer() {
         if (cancelled) return;
         if (Hls.isSupported()) {
           const h = new Hls({
-            // Eski repodan agresif config — düşük gecikme + dayanıklılık
+            // En yüksek kalite & dayanıklılık (4K destekli)
             enableWorker: true,
             lowLatencyMode: true,
-            backBufferLength: 15,
-            maxBufferLength: 20,
-            maxMaxBufferLength: 40,
-            manifestLoadingTimeOut: 10_000,
-            manifestLoadingMaxRetry: 2,
-            levelLoadingTimeOut: 10_000,
-            fragLoadingTimeOut: 15_000,
-            startLevel: -1,
-            abrEwmaDefaultEstimate: 500_000,
+            backBufferLength: 30,
+            maxBufferLength: 60,
+            maxMaxBufferLength: 120,
+            maxBufferSize: 240 * 1000 * 1000, // 240 MB buffer — 4K segment'ler için
+            manifestLoadingTimeOut: 15_000,
+            manifestLoadingMaxRetry: 4,
+            levelLoadingTimeOut: 15_000,
+            fragLoadingTimeOut: 20_000,
+            startLevel: -1,                  // Otomatik en iyi kalite
+            capLevelToPlayerSize: false,     // Player küçük diye kaliteyi kısma — KULLANICI istemiyor
+            abrEwmaDefaultEstimate: 1_000_000,
+            abrBandWidthFactor: 0.95,
+            abrBandWidthUpFactor: 0.7,
             testBandwidth: true,
             progressive: true,
             xhrSetup: (xhr: XMLHttpRequest) => {
@@ -249,7 +263,7 @@ export default function VideoPlayer() {
             },
           });
           hlsRef.current = h;
-          h.loadSource(selected.src!);
+          h.loadSource(activeSrc);
           h.attachMedia(v);
           h.on(Hls.Events.MANIFEST_PARSED, () => {
             const ls: Level[] = (h.levels || []).map((l: any, i: number) => ({
@@ -265,7 +279,7 @@ export default function VideoPlayer() {
             if (h.currentLevel === -1) setCurrentLevel(-1);
             else setCurrentLevel(data.level ?? -1);
           });
-          // ===== HLS ERROR HANDLING (eski repo mantığı) =====
+          // ===== HLS ERROR HANDLING (eski repo mantığı + server failover) =====
           h.on(Hls.Events.ERROR, (_: any, data: any) => {
             if (!data?.fatal) return;
             // NETWORK ERROR — segment yüklenemiyor, recover dene (3 deneme)
@@ -275,7 +289,13 @@ export default function VideoPlayer() {
                 try { h.startLoad(); } catch { /* noop */ }
                 return;
               }
-              // 3 deneme sonrası başarısız → freeze overlay
+              // 3 deneme başarısız → sonraki sunucuya geç
+              if (serverIndex < sources.length - 1) {
+                networkRetryRef.current = 0;
+                setServerIndex((i) => i + 1);
+                return;
+              }
+              // Tüm sunucular tükendi → freeze overlay
               setFreezeOverlay(true);
               return;
             }
@@ -284,14 +304,18 @@ export default function VideoPlayer() {
               try { h.recoverMediaError(); } catch { /* noop */ }
               return;
             }
-            // Diğer fatal hatalar (parse vs.) → freeze overlay → auto-retry
+            // Diğer fatal hatalar → sonraki sunucuya
+            if (serverIndex < sources.length - 1) {
+              setServerIndex((i) => i + 1);
+              return;
+            }
             setFreezeOverlay(true);
           });
         } else {
-          v.src = selected.src!;
+          v.src = activeSrc;
         }
       } catch {
-        v.src = selected.src!;
+        v.src = activeSrc;
       }
 
       // ===== Crash detection — eski repodaki mantık (currentTime advance kontrolü) =====
@@ -343,10 +367,16 @@ export default function VideoPlayer() {
       v.addEventListener('waiting', onWaiting);
       v.addEventListener('stalled', onStalled);
       v.addEventListener('error', onError);
+      const onPlay = () => setIsPlaying(true);
+      const onPause = () => setIsPlaying(false);
+      v.addEventListener('play', onPlay);
+      v.addEventListener('pause', onPause);
       cleanupListenersRef.current = () => {
         v.removeEventListener('waiting', onWaiting);
         v.removeEventListener('stalled', onStalled);
         v.removeEventListener('error', onError);
+        v.removeEventListener('play', onPlay);
+        v.removeEventListener('pause', onPause);
       };
     })();
     return () => {
@@ -356,7 +386,7 @@ export default function VideoPlayer() {
       cleanupListenersRef.current?.();
       if (hlsRef.current) { try { hlsRef.current.destroy(); } catch { /* noop */ } hlsRef.current = null; }
     };
-  }, [selected.id, adActive, awaitingResume, hasStarted]);
+  }, [selected.id, serverIndex, adActive, awaitingResume, hasStarted]);
 
   // ===== Controls =====
   const handlePlay = useCallback(() => {
@@ -371,6 +401,26 @@ export default function VideoPlayer() {
     if (videoRef.current) videoRef.current.muted = false;
   }, []);
 
+  // ===== Play/Pause — pause sonrası play'de CANLI YAYIN EDGE'ine atla =====
+  const togglePlay = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      // Canlı yayın için (HLS m3u8): seekable.end - 2sn'ye atla
+      try {
+        if (hlsRef.current && v.seekable && v.seekable.length > 0) {
+          const liveEdge = v.seekable.end(v.seekable.length - 1);
+          if (liveEdge - v.currentTime > 5) {
+            v.currentTime = Math.max(0, liveEdge - 2);
+          }
+        }
+      } catch { /* noop */ }
+      v.play().catch(() => { /* noop */ });
+    } else {
+      v.pause();
+    }
+  }, []);
+
   // Reklam doğal sonuna geldi → store'a yönlendir + kullanıcıyı manuel-play ekranına al
   const handleAdEnded = useCallback(() => {
     const ad = AD_LIBRARY[adIndex];
@@ -380,48 +430,18 @@ export default function VideoPlayer() {
     if (ad?.store) redirectToStore(ad.store);
   }, [adIndex]);
 
-  // ===== Stream Retry (eski repo: retryStream) =====
-  // Aynı kanalın HLS bağlantısını sıfırdan kurar — reklam YENİDEN OYNAMAZ
+  // ===== Stream Retry — bir sonraki sunucuya geçer, son sunucuda ise yenileme döngüsü =====
   const retryStream = useCallback(() => {
     setFreezeOverlay(false);
     stallCountRef.current = 0;
     networkRetryRef.current = 0;
     if (freezeAutoRetryRef.current) { clearTimeout(freezeAutoRetryRef.current); freezeAutoRetryRef.current = null; }
-    // HLS'i temizle, video'yu sıfırla
-    if (hlsRef.current) { try { hlsRef.current.destroy(); } catch { /* noop */ } hlsRef.current = null; }
-    const v = videoRef.current;
-    if (v) {
-      try { v.pause(); } catch { /* noop */ }
-      v.removeAttribute('src');
-      v.load();
-    }
-    // Aynı kanalı tekrar seç — useEffect tetiklenir, ama reklam state'i değişmez
-    // Trigger re-load by toggling a key state
-    setSelected((s) => ({ ...s })); // shallow clone — id aynı → useEffect dep değişmez
-    // Bunun yerine HLS'i manuel olarak yeniden kur
-    setTimeout(() => {
-      if (!v || !selected.src) return;
-      (async () => {
-        try {
-          if (selected.src!.includes('.m3u8') || selected.src!.includes('/api/')) {
-            const HlsMod = (await import('hls.js')).default;
-            if (HlsMod.isSupported()) {
-              const h = new HlsMod({
-                lowLatencyMode: true,
-                manifestLoadingTimeOut: 10_000,
-                manifestLoadingMaxRetry: 3,
-                fragLoadingTimeOut: 15_000,
-              });
-              hlsRef.current = h;
-              h.loadSource(selected.src!);
-              h.attachMedia(v);
-              h.on(HlsMod.Events.MANIFEST_PARSED, () => v.play().catch(() => { /* noop */ }));
-            } else { v.src = selected.src!; v.play().catch(() => { /* noop */ }); }
-          } else { v.src = selected.src!; v.play().catch(() => { /* noop */ }); }
-        } catch { /* noop */ }
-      })();
-    }, 100);
-  }, [selected]);
+    setServerIndex((idx) => {
+      // Mevcut sunucu son ise döngünün başına dön (eski repo davranışı)
+      const next = idx < sources.length - 1 ? idx + 1 : 0;
+      return next;
+    });
+  }, [sources.length]);
 
   // retryStream'i ref'e koy — interval ve event listener'lar erişebilsin
   useEffect(() => { retryStreamRef.current = retryStream; }, [retryStream]);
@@ -508,8 +528,33 @@ export default function VideoPlayer() {
             playsInline
             muted={muted}
             // controls={false} — KENDİ control bar'ımız var (eski repo tarzı)
+            style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
             data-testid="video-player"
           />
+
+          {/* 🔴 CANLI ROZETİ — sadece yayın aktif ve oynuyorsa */}
+          {hasStarted && !adActive && !awaitingResume && !streamError && isPlaying && (
+            <div
+              data-testid="live-badge"
+              style={{
+                position: 'absolute', top: 12, left: 12, zIndex: 25,
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '6px 12px', borderRadius: 6,
+                background: 'linear-gradient(135deg, rgba(255,0,80,0.92), rgba(220,0,60,0.92))',
+                border: '1px solid rgba(255,255,255,0.45)',
+                boxShadow: '0 4px 14px rgba(0,0,0,0.5), 0 0 18px rgba(255,0,80,0.5)',
+                fontFamily: 'Orbitron, sans-serif', fontSize: 11, fontWeight: 800, letterSpacing: 3, color: '#fff',
+                pointerEvents: 'none', userSelect: 'none',
+              }}
+            >
+              <span style={{
+                width: 8, height: 8, borderRadius: '50%', background: '#fff',
+                boxShadow: '0 0 10px #fff, 0 0 18px rgba(255,255,255,0.7)',
+                animation: 'live-pulse 1.4s ease-in-out infinite',
+              }} />
+              CANLI
+            </div>
+          )}
 
           {/* AD OVERLAY — SKIP YOK, kullanıcı sonuna kadar izlemek zorunda */}
           {adActive && (
@@ -689,6 +734,20 @@ export default function VideoPlayer() {
             >
               <div className="controls-left" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <button
+                  onClick={togglePlay}
+                  data-testid="playpause-btn"
+                  className="control-btn"
+                  style={{ background: 'none', border: 'none', color: 'var(--cyan, #00f0ff)', cursor: 'pointer', padding: 4, fontSize: 22, lineHeight: 1 }}
+                  aria-label={isPlaying ? 'Duraklat' : 'Oynat'}
+                  title={isPlaying ? 'Duraklat' : 'Oynat (canlıya atla)'}
+                >
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                    {isPlaying
+                      ? <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                      : <path d="M8 5v14l11-7z" />}
+                  </svg>
+                </button>
+                <button
                   onClick={toggleMute}
                   data-testid="mute-btn"
                   className="control-btn"
@@ -829,6 +888,10 @@ export default function VideoPlayer() {
           inline style ile mouseEnter/Leave kullandık çünkü Next CSS modules eklemek gereksiz */}
       <style jsx>{`
         .video-wrapper:hover :global([data-testid="video-controls"]) { opacity: 1 !important; }
+        @keyframes live-pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.5; transform: scale(0.85); }
+        }
       `}</style>
     </main>
   );
