@@ -60,7 +60,13 @@ function MatchDetailInner({ home, away, initial }: { home: string; away: string;
     return () => { alive = false; };
   }, [home, away, user]);
 
-  const isPreMatch = data ? (!data.score || isPreMatchStatus(data.eps) || data.eps === 'NS') : false;
+  // Pre-match: sadece veri MEVCUT ve eps açıkça pre-match. data yok ya da
+  // available=false ise pre-match diyemeyiz — "stats bulunamadı" göstereceğiz.
+  const isPreMatch = data?.available ? (
+    isPreMatchStatus(data.eps) ||
+    data.eps === 'NS' ||
+    (!data.score && !data.events?.length)
+  ) : false;
 
   return (
     <div data-testid="match-detail-client">

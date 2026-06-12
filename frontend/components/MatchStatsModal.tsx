@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { getClient } from '@/lib/api';
 import { useAuth } from './AuthProvider';
 import { TR, STAT_LABEL, STAT_ORDER, isPreMatchStatus } from '@/lib/i18n';
@@ -99,15 +100,23 @@ export default function MatchStatsModal({ home, away, onClose }: { home: string;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [home, away, user?.id]);
 
-  // Pre-match algılama: status veya EPS bilgisinden
-  const isPreMatch = data ? (
-    !data.score ||
+  // Pre-match: sadece veri MEVCUT ama maç başlamamışsa.
+  // Veri yoksa (available=false) pre-match değil "stats yok" durumudur.
+  const isPreMatch = data?.available ? (
     isPreMatchStatus(data.eps) ||
     data.eps === 'NS' ||
-    (data.score && data.score.home === 0 && data.score.away === 0 && isPreMatchStatus(data.eps))
+    (!data.score && !data.events?.length) ||
+    (data.score && Number(data.score.home) === 0 && Number(data.score.away) === 0 &&
+     !data.events?.length && isPreMatchStatus(data.eps))
   ) : false;
 
-  return (
+  // Render via portal so the modal escapes any parent's `contain` / `transform` ancestor.
+  const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setPortalEl(document.body);
+  }, []);
+
+  const modalContent = (
     <div
       className="match-detail-overlay"
       data-testid="match-stats-modal"
@@ -361,4 +370,6 @@ export default function MatchStatsModal({ home, away, onClose }: { home: string;
       </div>
     </div>
   );
+
+  return portalEl ? createPortal(modalContent, portalEl) : modalContent;
 }

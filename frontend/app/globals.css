@@ -42,7 +42,7 @@
             -webkit-tap-highlight-color: transparent;
         }
         /* Reduce paint areas */
-        .match-center { contain: content; }
+        .match-center { /* contain removed — was breaking fixed-position modals */ }
         .sponsor-section { contain: layout style; }
 
         .app-container {
@@ -742,6 +742,30 @@
         @media (max-width: 900px) {
             .channel-sidebar { display: none !important; }
             .player-layout { flex-direction: column !important; }
+        }
+        /* Mobile in desktop-mode (touch device regardless of viewport width):
+           keep channels visible but stack below video as horizontal scrollable strip */
+        @media (hover: none) and (pointer: coarse) and (min-width: 901px) {
+            .player-layout {
+                flex-direction: column !important;
+                gap: 8px !important;
+            }
+            .channel-sidebar {
+                width: 100% !important;
+                max-height: none !important;
+                flex-direction: row !important;
+                overflow-x: auto !important;
+                overflow-y: hidden !important;
+                gap: 6px !important;
+                padding: 8px 4px !important;
+                scrollbar-width: thin;
+            }
+            .channel-sidebar .sidebar-ch-btn {
+                flex: 0 0 auto !important;
+                min-width: 130px !important;
+                padding: 10px 12px !important;
+                font-size: 14px !important;
+            }
         }
         /* Smooth scroll for whole page (respects reduced-motion) */
         html { scroll-behavior: smooth; }
