@@ -112,12 +112,25 @@ export default function VideoPlayer() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
 
+  // Yeni eski-repo UI state'leri
+  const [netType, setNetType] = useState('—');        // '4G' | 'WiFi' | '—'
+  const [fps, setFps] = useState(0);                  // gerçek zamanlı fps
+  const [subtitleTracks, setSubtitleTracks] = useState<Array<{id: number; name: string; lang: string}>>([]);
+  const [currentSubtitle, setCurrentSubtitle] = useState(-1); // -1 = kapalı
+  const [subtitleOpen, setSubtitleOpen] = useState(false);
+  const [castSupported, setCastSupported] = useState(false);
+  const [casting, setCasting] = useState(false);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<any>(null);
+  const hlsActiveSrcRef = useRef<string | null>(null); // anti Strict-Mode double-init
   const playedTimeRef = useRef(0);
   const adVideoRef = useRef<HTMLVideoElement>(null);
   const adSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fpsFrameCountRef = useRef(0);
+  const fpsLastSampleRef = useRef(0);
+  const fpsRafIdRef = useRef<number | null>(null);
 
   // ===== Crash / freeze detection refs (eski repo mantığı) =====
   // STALL_THRESHOLD = 15sn donma → "YAYIN DONDU" overlay göster
@@ -216,6 +229,97 @@ export default function VideoPlayer() {
     };
   }, []);
 
+  // ===== Network connection type detect (Navigator.connection API) =====
+  useEffect(() => {
+    if (typeof navigator === 'undefined') return;
+    const conn: any = (navigator as any).connection || (navigator as any).mozConnection || (navigator as any).webkitConnection;
+    const update = () => {
+      try {
+        if (!conn) { setNetType(navigator.onLine ? 'WiFi' : 'OFFLINE'); return; }
+        const t = (conn.effectiveType || conn.type || '').toLowerCase();
+        if (!navigator.onLine) { setNetType('OFFLINE'); return; }
+        if (t === 'wifi' || t === 'ethernet') setNetType('WiFi');
+        else if (t === '4g') setNetType('4G');
+        else if (t === '5g') setNetType('5G');
+        else if (t === '3g') setNetType('3G');
+        else if (t === '2g' || t === 'slow-2g') setNetType('2G');
+        else setNetType('WiFi');
+      } catch { setNetType('—'); }
+    };
+    update();
+    const onOnline = () => update();
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOnline);
+    if (conn && conn.addEventListener) conn.addEventListener('change', update);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOnline);
+      if (conn && conn.removeEventListener) conn.removeEventListener('change', update);
+    };
+  }, []);
+
+  // ===== Cast support detect (Remote Playback API + iOS AirPlay) =====
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    try {
+      // @ts-ignore
+      const hasRemote = !!(v as any).remote && typeof (v as any).remote.watchAvailability === 'function';
+      // @ts-ignore
+      const hasAirplay = typeof (v as any).webkitShowPlaybackTargetPicker === 'function';
+      setCastSupported(hasRemote || hasAirplay);
+    } catch { setCastSupported(false); }
+  }, [hasStarted]);
+
+  // ===== Gerçek zamanlı FPS sayacı — requestVideoFrameCallback (Chrome/Edge) + fallback rAF =====
+  useEffect(() => {
+    if (!hasStarted || adActive || awaitingResume || streamError) {
+      setFps(0);
+      if (fpsRafIdRef.current) cancelAnimationFrame(fpsRafIdRef.current);
+      fpsRafIdRef.current = null;
+      return;
+    }
+    const v = videoRef.current;
+    if (!v) return;
+    fpsFrameCountRef.current = 0;
+    fpsLastSampleRef.current = performance.now();
+    // @ts-ignore
+    if (typeof v.requestVideoFrameCallback === 'function') {
+      const cb = () => {
+        fpsFrameCountRef.current += 1;
+        const now = performance.now();
+        const dt = now - fpsLastSampleRef.current;
+        if (dt >= 1000) {
+          setFps(Math.round((fpsFrameCountRef.current * 1000) / dt));
+          fpsFrameCountRef.current = 0;
+          fpsLastSampleRef.current = now;
+        }
+        // @ts-ignore
+        v.requestVideoFrameCallback(cb);
+      };
+      // @ts-ignore
+      v.requestVideoFrameCallback(cb);
+      return;
+    }
+    // Fallback rAF (kesinlik düşük ama çalışır)
+    const loop = () => {
+      fpsFrameCountRef.current += 1;
+      const now = performance.now();
+      const dt = now - fpsLastSampleRef.current;
+      if (dt >= 1000) {
+        setFps(Math.round((fpsFrameCountRef.current * 1000) / dt));
+        fpsFrameCountRef.current = 0;
+        fpsLastSampleRef.current = now;
+      }
+      fpsRafIdRef.current = requestAnimationFrame(loop);
+    };
+    fpsRafIdRef.current = requestAnimationFrame(loop);
+    return () => {
+      if (fpsRafIdRef.current) cancelAnimationFrame(fpsRafIdRef.current);
+      fpsRafIdRef.current = null;
+    };
+  }, [hasStarted, adActive, awaitingResume, streamError, selected.id, serverIndex]);
+
   // ===== Mevcut yayın URL'i — server failover destekli =====
   const sources = CHANNEL_SOURCES[selected.id] || (selected.src ? [selected.src] : []);
   const activeSrc = sources[serverIndex] || sources[0] || selected.src || '';
@@ -240,6 +344,12 @@ export default function VideoPlayer() {
   // ===== Load HLS / fallback — REKLAM YOKKEN VE MANUEL PLAY BEKLEME YOKKEN =====
   useEffect(() => {
     if (adActive || awaitingResume || !hasStarted) return;
+    // Eğer pending destroy varsa iptal et (Strict Mode aynı src ile remount)
+    const pending = (hlsRef as any).__pendingDestroy;
+    if (pending) { clearTimeout(pending); (hlsRef as any).__pendingDestroy = null; }
+    // Strict Mode (Next dev) effect'i 2 kez tetikler — aynı src ise tekrar HLS başlatma
+    if (hlsActiveSrcRef.current === activeSrc && hlsRef.current) return;
+    hlsActiveSrcRef.current = activeSrc;
     setStreamError(''); setLevels([]); setCurrentLevel(-1);
     const v = videoRef.current; if (!v) return;
     if (hlsRef.current) { try { hlsRef.current.destroy(); } catch { /* noop */ }; hlsRef.current = null; }
@@ -296,6 +406,17 @@ export default function VideoPlayer() {
               bitrate: l.bitrate || 0,
             })).sort((a: Level, b: Level) => b.height - a.height);
             setLevels(ls);
+            // Subtitle tracks (altyazı) — HLS subtitle playlist'leri okur
+            try {
+              const subs: any[] = h.subtitleTracks || [];
+              setSubtitleTracks(subs.map((s: any, i: number) => ({
+                id: i,
+                name: s.name || s.lang || `Altyazı ${i + 1}`,
+                lang: s.lang || '',
+              })));
+              if (typeof h.subtitleTrack === 'number') setCurrentSubtitle(h.subtitleTrack);
+              else setCurrentSubtitle(-1);
+            } catch { setSubtitleTracks([]); setCurrentSubtitle(-1); }
             networkRetryRef.current = 0;
             v.play().catch(() => { /* noop */ });
           });
@@ -306,6 +427,16 @@ export default function VideoPlayer() {
           // ===== HLS ERROR HANDLING (eski repo mantığı + server failover) =====
           h.on(Hls.Events.ERROR, (_: any, data: any) => {
             if (!data?.fatal) return;
+            // CODEC uyumsuzluğu — proxy CODECS attribute'unu zaten kaldırıyor;
+            // burada düşersek son çare: sonraki sunucuya geç
+            if (data.details === 'manifestIncompatibleCodecsError') {
+              if (serverIndex < sources.length - 1) {
+                setServerIndex((i) => i + 1);
+              } else {
+                setFreezeOverlay(true);
+              }
+              return;
+            }
             // NETWORK ERROR — segment yüklenemiyor, recover dene (3 deneme)
             if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
               if (networkRetryRef.current < MAX_NETWORK_RETRIES) {
@@ -408,7 +539,14 @@ export default function VideoPlayer() {
       if (crashCheckRef.current) { clearInterval(crashCheckRef.current); crashCheckRef.current = null; }
       if (freezeAutoRetryRef.current) { clearTimeout(freezeAutoRetryRef.current); freezeAutoRetryRef.current = null; }
       cleanupListenersRef.current?.();
-      if (hlsRef.current) { try { hlsRef.current.destroy(); } catch { /* noop */ } hlsRef.current = null; }
+      // Strict Mode'da hızlı yeniden mount geliyorsa instance'ı koru.
+      // microtask: gerçek unmount mı yoksa Strict Mode mı?
+      const willRemount = setTimeout(() => {
+        if (hlsRef.current) { try { hlsRef.current.destroy(); } catch { /* noop */ } hlsRef.current = null; }
+        hlsActiveSrcRef.current = null;
+      }, 0);
+      // Eğer Strict Mode hemen yeni effect koşturur ve aynı src ise: yeni effect destroy'u iptal eder
+      (hlsRef as any).__pendingDestroy = willRemount;
     };
   }, [selected.id, serverIndex, adActive, awaitingResume, hasStarted]);
 
@@ -426,20 +564,28 @@ export default function VideoPlayer() {
 
   // Reklam bittikten sonra kullanıcının yayını başlatmak için bastığı manuel Play tuşu
   const handleResume = useCallback(() => {
-    setAwaitingResume(false);
     setMuted(false);
     const v = videoRef.current;
-    if (v) {
-      v.muted = false;
-      // Reklam sırasında v.removeAttribute('src') yapıldı — HLS effect tekrar src yükleyecek
-      // ama bazen tarayıcı kilitlenir, manuel olarak load() çağır
-      try { v.load(); } catch { /* noop */ }
-    }
-    // HLS effect bir tick sonra çalışacak; biz de play'i yedek olarak deneyelim
-    setTimeout(() => {
+    if (v) v.muted = false;
+    // State'i değiştir → HLS effect tekrar tetiklenecek
+    setAwaitingResume(false);
+    // HLS'in attach olup data yüklemesi için 200ms'lik adımlarla 5sn boyunca play dene
+    // Bu kullanıcı gesture context'i içinde play çağırmamızı garanti eder (autoplay policy)
+    let tries = 0;
+    const tryPlay = () => {
       const vv = videoRef.current;
-      if (vv && vv.paused) vv.play().catch(() => { /* noop */ });
-    }, 600);
+      if (!vv) return;
+      vv.muted = false;
+      if (vv.readyState >= 2 && vv.paused) {
+        vv.play().catch(() => { /* noop */ });
+        return;
+      }
+      if (vv.readyState >= 2 && !vv.paused) {
+        return; // zaten oynuyor
+      }
+      if (tries++ < 25) setTimeout(tryPlay, 200);
+    };
+    setTimeout(tryPlay, 300);
   }, []);
 
   // ===== Play/Pause — pause sonrası play'de CANLI YAYIN EDGE'ine atla =====
@@ -509,6 +655,32 @@ export default function VideoPlayer() {
     setQualityOpen(false);
   }, []);
 
+  // Altyazı seç (id = -1 → kapalı)
+  const setSubtitle = useCallback((id: number) => {
+    if (hlsRef.current) hlsRef.current.subtitleTrack = id;
+    setCurrentSubtitle(id);
+    setSubtitleOpen(false);
+  }, []);
+
+  // Cast / AirPlay — Remote Playback API + iOS WebKit fallback
+  const toggleCast = useCallback(async () => {
+    const v = videoRef.current;
+    if (!v) return;
+    try {
+      // @ts-ignore
+      if ((v as any).webkitShowPlaybackTargetPicker) {
+        // @ts-ignore — iOS AirPlay
+        (v as any).webkitShowPlaybackTargetPicker();
+        return;
+      }
+      // @ts-ignore
+      const remote = (v as any).remote;
+      if (remote && typeof remote.prompt === 'function') {
+        await remote.prompt();
+      }
+    } catch { /* noop — user iptal etti veya destek yok */ }
+  }, []);
+
   const toggleMute = useCallback(() => {
     setMuted((prev) => {
       const next = !prev;
@@ -541,15 +713,15 @@ export default function VideoPlayer() {
 
   // Close quality menu on outside click
   useEffect(() => {
-    if (!qualityOpen) return;
+    if (!qualityOpen && !subtitleOpen) return;
     const onClick = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement)?.closest('[data-testid="quality-selector"]')) {
-        setQualityOpen(false);
-      }
+      const t = e.target as HTMLElement;
+      if (qualityOpen && !t?.closest('[data-testid="quality-selector"]')) setQualityOpen(false);
+      if (subtitleOpen && !t?.closest('[data-testid="subtitle-selector"]')) setSubtitleOpen(false);
     };
     document.addEventListener('click', onClick);
     return () => document.removeEventListener('click', onClick);
-  }, [qualityOpen]);
+  }, [qualityOpen, subtitleOpen]);
 
   const currentLabel = currentLevel === -1
     ? TR.AUTO
@@ -579,27 +751,61 @@ export default function VideoPlayer() {
             data-testid="video-player"
           />
 
-          {/* 🔴 CANLI ROZETİ — sadece yayın aktif ve oynuyorsa */}
-          {hasStarted && !adActive && !awaitingResume && !streamError && isPlaying && (
-            <div
-              data-testid="live-badge"
+          {/* 📺 CUSTOM CAST BUTTON — sol üst, sadece yayın aktifken */}
+          {hasStarted && !adActive && !awaitingResume && !streamError && (
+            <button
+              onClick={toggleCast}
+              data-testid="cast-btn"
+              aria-label="Yayını cihaza aktar"
+              title={castSupported ? 'Chromecast / AirPlay' : 'Bu cihaz desteklemiyor'}
+              disabled={!castSupported}
               style={{
                 position: 'absolute', top: 12, left: 12, zIndex: 25,
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '6px 12px', borderRadius: 6,
-                background: 'linear-gradient(135deg, rgba(255,0,80,0.92), rgba(220,0,60,0.92))',
-                border: '1px solid rgba(255,255,255,0.45)',
-                boxShadow: '0 4px 14px rgba(0,0,0,0.5), 0 0 18px rgba(255,0,80,0.5)',
-                fontFamily: 'Orbitron, sans-serif', fontSize: 11, fontWeight: 800, letterSpacing: 3, color: '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 38, height: 32, padding: 0,
+                borderRadius: 6,
+                background: 'linear-gradient(135deg, rgba(8,4,14,0.78), rgba(20,8,30,0.78))',
+                border: `1px solid ${castSupported ? 'rgba(0,240,255,0.45)' : 'rgba(255,255,255,0.18)'}`,
+                color: castSupported ? 'var(--cyan, #00f0ff)' : 'rgba(255,255,255,0.35)',
+                cursor: castSupported ? 'pointer' : 'not-allowed',
+                boxShadow: castSupported ? '0 4px 14px rgba(0,0,0,0.45), 0 0 14px rgba(0,240,255,0.25)' : 'none',
+                backdropFilter: 'blur(6px)',
+                transition: 'transform 0.15s, box-shadow 0.15s',
+              }}
+              onMouseEnter={(e) => { if (castSupported) e.currentTarget.style.transform = 'scale(1.06)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <path d="M21 3H3c-1.1 0-2 .9-2 2v3h2V5h18v14h-7v2h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2c4.97 0 9 4.03 9 9h2c0-6.08-4.93-11-11-11z" />
+              </svg>
+            </button>
+          )}
+
+          {/* ⚡ FPS INDICATOR — sağ üst (UNMUTE butonu varken solunda dur) */}
+          {hasStarted && !adActive && !awaitingResume && !streamError && isPlaying && fps > 0 && (
+            <div
+              data-testid="fps-indicator"
+              style={{
+                position: 'absolute', top: 12,
+                right: muted ? 110 : 12, // UNMUTE pill açıksa sola kay
+                zIndex: 25,
+                padding: '6px 10px', borderRadius: 6,
+                background: 'linear-gradient(135deg, rgba(8,4,14,0.82), rgba(20,8,30,0.82))',
+                border: '1px solid rgba(0,240,255,0.35)',
+                color: 'var(--cyan, #00f0ff)',
+                fontFamily: 'Orbitron, sans-serif', fontSize: 10, fontWeight: 700, letterSpacing: 1.5,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                backdropFilter: 'blur(6px)',
                 pointerEvents: 'none', userSelect: 'none',
+                display: 'flex', alignItems: 'center', gap: 6,
               }}
             >
               <span style={{
-                width: 8, height: 8, borderRadius: '50%', background: '#fff',
-                boxShadow: '0 0 10px #fff, 0 0 18px rgba(255,255,255,0.7)',
-                animation: 'live-pulse 1.4s ease-in-out infinite',
+                width: 6, height: 6, borderRadius: '50%',
+                background: fps >= 50 ? 'var(--green, #00ff66)' : fps >= 24 ? 'var(--orange, #ffa600)' : '#ff3060',
+                boxShadow: `0 0 6px ${fps >= 50 ? 'var(--green, #00ff66)' : fps >= 24 ? 'var(--orange, #ffa600)' : '#ff3060'}`,
               }} />
-              CANLI
+              {fps} FPS
             </div>
           )}
 
@@ -786,7 +992,7 @@ export default function VideoPlayer() {
               onMouseLeave={(e) => (e.currentTarget.style.opacity = !isPlaying ? '1' : '0')}
               data-testid="video-controls"
             >
-              <div className="controls-left" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div className="controls-left" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <button
                   onClick={togglePlay}
                   data-testid="playpause-btn"
@@ -809,27 +1015,160 @@ export default function VideoPlayer() {
                   aria-label={muted ? TR.UNMUTE : TR.MUTE}
                   title={muted ? TR.UNMUTE : TR.MUTE}
                 >
-                  {muted ? '🔇' : '🔊'}
+                  {muted
+                    ? <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" /></svg>
+                    : <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" /></svg>
+                  }
                 </button>
-              </div>
-              <div className="controls-right" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                {/* QUALITY SELECTOR */}
-                {levels.length > 1 && (
-                  <div className="quality-selector" data-testid="quality-selector" style={{ position: 'relative' }}>
-                    <button
-                      className="quality-btn"
-                      onClick={(e) => { e.stopPropagation(); setQualityOpen((o) => !o); }}
-                      data-testid="quality-btn"
+
+                {/* 🎬 SUBTITLE SELECTOR — sol alt */}
+                <div className="subtitle-selector" data-testid="subtitle-selector" style={{ position: 'relative' }}>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setSubtitleOpen((o) => !o); }}
+                    data-testid="subtitle-btn"
+                    className="control-btn"
+                    aria-label="Altyazı"
+                    title="Altyazı"
+                    style={{
+                      background: subtitleTracks.length > 0 && currentSubtitle !== -1
+                        ? 'rgba(0,240,255,0.18)'
+                        : 'none',
+                      border: 'none',
+                      color: subtitleTracks.length === 0 ? 'rgba(255,255,255,0.35)' : 'var(--cyan, #00f0ff)',
+                      cursor: subtitleTracks.length === 0 ? 'not-allowed' : 'pointer',
+                      padding: 4,
+                      borderRadius: 4,
+                    }}
+                    disabled={subtitleTracks.length === 0}
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                      <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM4 12h4v2H4v-2zm10 6H4v-2h10v2zm6 0h-4v-2h4v2zm0-4H10v-2h10v2z" />
+                    </svg>
+                  </button>
+                  {subtitleOpen && (
+                    <div
+                      data-testid="subtitle-dropdown"
                       style={{
-                        background: 'linear-gradient(135deg, rgba(0,240,255,0.2), rgba(255,0,170,0.2))',
-                        border: '1px solid var(--pink, #ff00aa)', color: 'var(--pink, #ff00aa)',
-                        padding: '4px 10px', fontSize: 10, fontWeight: 700, letterSpacing: 1,
-                        cursor: 'pointer', fontFamily: 'Orbitron, sans-serif',
+                        position: 'absolute', bottom: '120%', left: 0,
+                        background: 'rgba(10,5,16,0.95)',
+                        border: '1px solid var(--cyan, #00f0ff)',
+                        minWidth: 130, padding: '4px 0',
+                        boxShadow: '0 6px 16px rgba(0,0,0,0.5)',
                       }}
                     >
-                      {currentLabel}
-                    </button>
-                    {qualityOpen && (
+                      <div
+                        onClick={() => setSubtitle(-1)}
+                        data-testid="subtitle-off"
+                        style={{
+                          padding: '8px 14px', fontSize: 11, cursor: 'pointer',
+                          fontFamily: 'VT323, monospace',
+                          color: currentSubtitle === -1 ? 'var(--cyan, #00f0ff)' : 'var(--text-dim)',
+                          background: currentSubtitle === -1 ? 'rgba(0,240,255,0.1)' : 'transparent',
+                        }}
+                      >
+                        KAPALI{currentSubtitle === -1 ? ' ✓' : ''}
+                      </div>
+                      {subtitleTracks.length === 0 && (
+                        <div style={{
+                          padding: '8px 14px', fontSize: 10,
+                          fontFamily: 'VT323, monospace', color: 'var(--text-dim)',
+                          fontStyle: 'italic',
+                        }}>
+                          Bu yayında altyazı yok
+                        </div>
+                      )}
+                      {subtitleTracks.map((s) => (
+                        <div
+                          key={s.id}
+                          onClick={() => setSubtitle(s.id)}
+                          data-testid={`subtitle-${s.id}`}
+                          style={{
+                            padding: '8px 14px', fontSize: 11, cursor: 'pointer',
+                            fontFamily: 'VT323, monospace',
+                            color: currentSubtitle === s.id ? 'var(--cyan, #00f0ff)' : 'var(--text-dim)',
+                            background: currentSubtitle === s.id ? 'rgba(0,240,255,0.1)' : 'transparent',
+                          }}
+                        >
+                          {s.name}{currentSubtitle === s.id ? ' ✓' : ''}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 🔴 LIVE ROZETİ — controls bar içinde, oynuyorken */}
+                {isPlaying && (
+                  <div
+                    data-testid="live-badge"
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6,
+                      padding: '4px 10px', borderRadius: 4,
+                      background: 'linear-gradient(135deg, rgba(255,0,80,0.92), rgba(220,0,60,0.92))',
+                      border: '1px solid rgba(255,255,255,0.35)',
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.4), 0 0 10px rgba(255,0,80,0.4)',
+                      fontFamily: 'Orbitron, sans-serif', fontSize: 10, fontWeight: 800, letterSpacing: 2.5, color: '#fff',
+                      pointerEvents: 'none', userSelect: 'none',
+                    }}
+                  >
+                    <span style={{
+                      width: 6, height: 6, borderRadius: '50%', background: '#fff',
+                      boxShadow: '0 0 8px #fff, 0 0 14px rgba(255,255,255,0.7)',
+                      animation: 'live-pulse 1.4s ease-in-out infinite',
+                    }} />
+                    CANLI
+                  </div>
+                )}
+              </div>
+
+              {/* 📶 CONNECTION INDICATOR — orta */}
+              <div
+                data-testid="connection-indicator"
+                title={`Bağlantı: ${netType}`}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '4px 9px', borderRadius: 4,
+                  background: 'rgba(8,4,14,0.6)',
+                  border: '1px solid rgba(0,240,255,0.25)',
+                  color: netType === 'OFFLINE' ? '#ff3060' : 'var(--cyan, #00f0ff)',
+                  fontFamily: 'Orbitron, sans-serif', fontSize: 10, fontWeight: 700, letterSpacing: 1.5,
+                  pointerEvents: 'none', userSelect: 'none',
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                  {netType === 'WiFi' ? (
+                    <path d="M1 9l2 2c4.97-4.97 13.03-4.97 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3c-1.65-1.66-4.34-1.66-6 0zm-4-4l2 2c2.76-2.76 7.24-2.76 10 0l2-2C15.14 9.14 8.87 9.14 5 13z" />
+                  ) : (
+                    <path d="M2 22h20V2L2 22z" />
+                  )}
+                </svg>
+                {netType}
+              </div>
+
+              <div className="controls-right" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                {/* QUALITY SELECTOR — daima görünür (pembe rozet) */}
+                <div className="quality-selector" data-testid="quality-selector" style={{ position: 'relative' }}>
+                  <button
+                    className="quality-btn"
+                    onClick={(e) => { e.stopPropagation(); if (levels.length > 0) setQualityOpen((o) => !o); }}
+                    data-testid="quality-btn"
+                    disabled={levels.length === 0}
+                    title={levels.length === 0 ? 'Yayın yüklenmedi' : 'Kalite seçimi'}
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(255,0,170,0.25), rgba(170,0,255,0.25))',
+                      border: '1.5px solid var(--pink, #ff00aa)',
+                      color: '#fff',
+                      padding: '4px 12px', fontSize: 10, fontWeight: 800, letterSpacing: 1.5,
+                      cursor: levels.length === 0 ? 'not-allowed' : 'pointer',
+                      fontFamily: 'Orbitron, sans-serif',
+                      borderRadius: 4,
+                      boxShadow: '0 0 10px rgba(255,0,170,0.45)',
+                      textShadow: '0 0 6px rgba(255,0,170,0.7)',
+                      opacity: levels.length === 0 ? 0.55 : 1,
+                    }}
+                  >
+                    {levels.length === 0 ? TR.AUTO : currentLabel}
+                  </button>
+                  {qualityOpen && levels.length > 0 && (
                       <div
                         className="quality-dropdown open"
                         data-testid="quality-dropdown"
@@ -870,8 +1209,7 @@ export default function VideoPlayer() {
                         ))}
                       </div>
                     )}
-                  </div>
-                )}
+                </div>
                 <button
                   onClick={togglePip}
                   data-testid="pip-btn"

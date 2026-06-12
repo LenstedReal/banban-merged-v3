@@ -44,6 +44,10 @@ async def proxy_stream(url: str, max_level: int = 1080):
                     if res_m and int(res_m.group(1)) > max_level:
                         i += 2
                         continue
+                    # CODECS attribute'unu kaldır — bazı tarayıcılar/Chromium build'leri
+                    # H.264 codec string'lerini reddedip "manifestIncompatibleCodecsError"
+                    # fırlatıyor. Kaldırınca HLS.js MediaSource'un kendi kararını kullanır.
+                    line = re.sub(r',?CODECS="[^"]*"', '', line)
                 if line.startswith('#'):
                     if 'URI="' in line:
                         m = re.search(r'URI="([^"]+)"', line)

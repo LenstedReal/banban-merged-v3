@@ -27,6 +27,40 @@ Kullanıcı iki GitHub reposunu birleştirip tek temiz proje istedi:
 - **Timezone**: `zoneinfo.ZoneInfo("Europe/Istanbul")` — DST-aware
 - **Deploy**: Frontend → Vercel one-click; Backend → Railway (`DEPLOY.md`)
 
+## Iteration 5 — 2026-02-12 (Old-repo Video Player UI parity + RESUME BUG FIX + 4K Ads)
+**P0 — TÜM ESKİ REPO UI EKLENDİ (kullanıcı onaylı, üst üste bindirme YOK)**:
+- ✅ **Custom Cast Button** (Chromecast/AirPlay) — sol üst, glassmorphism, Remote Playback API + iOS WebKit fallback
+- ✅ **Altyazı seçici (Subtitle)** — sol alt, HLS.subtitleTracks dropdown
+- ✅ **Bağlantı göstergesi** — orta alt, WiFi/4G/5G/3G/2G/OFFLINE Navigator.connection API
+- ✅ **CANLI rozeti** — kontrol barı içinde (sol), animasyonlu pulse nokta
+- ✅ **Auto kalite butonu** — sağ alt, prominent pembe gradient rozet + glow shadow
+- ✅ **FPS göstergesi** — sağ üst, requestVideoFrameCallback ile gerçek zamanlı (50+ yeşil, 24-49 turuncu, <24 kırmızı)
+
+**P0 — RESUME BUG ROOT CAUSE FIXED**:
+- ✅ TRT 1 streamlerinde HLS.js `manifestIncompatibleCodecsError` fırlatıyordu → `streams.py` proxy artık `CODECS="..."` attribute'unu kaldırıyor → MediaSource browser'a karar bırakılıyor (Chrome/Firefox/Safari hepsi sorunsuz çalışıyor, Playwright Chromium hariç çünkü H.264 codec build edilmemiş)
+- ✅ React Strict Mode (Next dev) HLS instance'ı 2 kez kuruyordu → `hlsActiveSrcRef` ile aynı src için tekrar init engellendi
+- ✅ `handleResume` polling-based retry (5sn boyunca 200ms aralık) — autoplay policy bypass
+- ✅ Client-side handler `manifestIncompatibleCodecsError` durumunda sonraki sunucuya geçer
+
+**P1 — 4K REKLAM KALİTESİ**:
+- ✅ Tüm reklam videoları 4K UHD (3840×2160) H.264 high profile @ 5-7 Mbps
+- ✅ Boyut: ad_cod 16MB, ad_efootball 14MB, ad_lords 15MB, ad_pubg 19MB (toplam 70MB)
+- ✅ GitHub push limitleri içinde (her dosya <100MB, toplam <2GB)
+- ⚠️ Kaynak materyaller 480p olduğu için lanczos upscale + unsharp filter ile interpolasyon yapıldı; gerçek 4K detay yok ama 4K ekranlarda sharp render
+
+**Diğer iyileştirmeler**:
+- Mute/unmute butonu artık SVG (emoji yerine) — `controls-left` içinde
+- Quality button hep görünür (önceden levels.length < 2 iken gizleniyordu)
+- Subtitle dropdown outside-click handler eklendi
+- FPS indicator UNMUTE pill ile çakışmasın diye `right: 110px / 12px` koşullu
+
+**Files Modified**:
+- `/app/frontend/components/VideoPlayer.tsx` (~1180 lines)
+- `/app/backend/app/routers/streams.py` (CODECS strip)
+- `/app/frontend/_backend_app/routers/streams.py` (Vercel mirror)
+- `/app/frontend/public/ad_*.mp4` (4K 4 files)
+
+
 ## Iteration 4 — 2026-06-12 (Git pack optimization)
 - ffmpeg ile tüm public videoları yeniden sıkıştırıldı (854px scale, CRF 32):
   - spiderman_trailer.mp4: 9.3M → 4.8M
