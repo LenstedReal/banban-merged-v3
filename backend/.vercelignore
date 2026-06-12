@@ -1,0 +1,10 @@
+# Reduce Vercel serverless bundle size
+tests/
+test_reports/
+__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+.env
+.env.local
+*.log
