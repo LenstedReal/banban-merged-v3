@@ -27,6 +27,18 @@ Kullanıcı iki GitHub reposunu birleştirip tek temiz proje istedi:
 - **Timezone**: `zoneinfo.ZoneInfo("Europe/Istanbul")` — DST-aware
 - **Deploy**: Frontend → Vercel one-click; Backend → Railway (`DEPLOY.md`)
 
+## Iteration 4 — 2026-06-12 (Git pack optimization)
+- ffmpeg ile tüm public videoları yeniden sıkıştırıldı (854px scale, CRF 32):
+  - spiderman_trailer.mp4: 9.3M → 4.8M
+  - ad_cod.mp4: 4.3M → 1.0M
+  - ad_efootball.mp4: 1.3M → 503K
+  - ad_lords.mp4: 4.8M → 1.3M
+  - ad_pubg.mp4: 4.5M → 1.5M
+- `/app/media_backup/` tamamen kaldırıldı (kullanılmayan yedek videolar).
+- `git filter-repo` ile geçmişten kaldırıldı: `media_backup/`, `_old_backup_static_html/`, `vercel-deploy/`, eski büyük blob versiyonları.
+- Tüm commit'ler tek bir squash commit'e dönüştürüldü.
+- **Sonuç**: `.git` 78M → 12M, pack 77.39 MiB → 11.20 MiB. GitHub push hazır.
+
 ## Iteration 3 Changes (this session, 2026-06-12)
 1. **🇹🇷 Türkçe Takım İsim Çevirisi** (`core/team_translations.py`):
    - 80+ FIFA millî takımı (Kanada, ABD, Brezilya, Almanya, İspanya, Hollanda, Japonya, Suudi Arabistan, Fas, Senegal...)
