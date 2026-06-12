@@ -598,17 +598,7 @@ export default function VideoPlayer() {
                   Reklam {adRemainingSec} sn
                 </span>
               </div>
-              {/* ALT — Atlanamaz uyarısı */}
-              <div style={{
-                position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
-                padding: '6px 14px', borderRadius: 4,
-                background: 'rgba(0,0,0,0.6)', color: 'var(--text-dim)',
-                fontFamily: 'VT323, monospace', fontSize: 12, letterSpacing: 2,
-                border: '1px solid rgba(255,255,255,0.08)',
-                pointerEvents: 'none',
-              }}>
-                Bu reklam atlanamaz — Bitmesini bekle
-              </div>
+              {/* ALT — boş — eski "atlanamaz" yazısı kaldırıldı */}
             </div>
           )}
 
@@ -878,7 +868,6 @@ export default function VideoPlayer() {
               }} />
               <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
               {c.badge && <span className="new-badge">{c.badge}</span>}
-              {c.premium && <span style={{ fontSize: 9, color: 'var(--orange, #ffa600)', marginLeft: 4, letterSpacing: 1 }}>PRO</span>}
             </button>
           ))}
         </div>
