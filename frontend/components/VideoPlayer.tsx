@@ -91,6 +91,21 @@ export default function VideoPlayer() {
   const adVideoRef = useRef<HTMLVideoElement>(null);
   const adSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ===== Crash / freeze detection refs (eski repo mantığı) =====
+  // STALL_THRESHOLD = 15sn donma → "YAYIN DONDU" overlay göster
+  // CRASH_THRESHOLD = 45sn donma → tam çöktü → otomatik yeniden başlat
+  const stallCountRef = useRef(0);
+  const lastPlaybackTimeRef = useRef(0);
+  const crashCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const freezeAutoRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const networkRetryRef = useRef(0);
+  const retryStreamRef = useRef<(() => void) | null>(null);
+  const cleanupListenersRef = useRef<(() => void) | null>(null);
+  const [freezeOverlay, setFreezeOverlay] = useState(false);
+  const STALL_THRESHOLD = 15;
+  const CRASH_THRESHOLD = 45;
+  const MAX_NETWORK_RETRIES = 3;
+
   // ===== Pre-roll on channel change =====
   useEffect(() => {
     if (!hasStarted) return;
@@ -218,17 +233,34 @@ export default function VideoPlayer() {
               bitrate: l.bitrate || 0,
             })).sort((a: Level, b: Level) => b.height - a.height);
             setLevels(ls);
+            networkRetryRef.current = 0;
             v.play().catch(() => { /* noop */ });
           });
           h.on(Hls.Events.LEVEL_SWITCHED, (_: any, data: any) => {
             if (h.currentLevel === -1) setCurrentLevel(-1);
             else setCurrentLevel(data.level ?? -1);
           });
+          // ===== HLS ERROR HANDLING (eski repo mantığı) =====
           h.on(Hls.Events.ERROR, (_: any, data: any) => {
-            if (data?.fatal) {
-              setStreamError(TR.STREAM_UNAVAILABLE);
-              try { h.destroy(); } catch { /* noop */ }
+            if (!data?.fatal) return;
+            // NETWORK ERROR — segment yüklenemiyor, recover dene (3 deneme)
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+              if (networkRetryRef.current < MAX_NETWORK_RETRIES) {
+                networkRetryRef.current += 1;
+                try { h.startLoad(); } catch { /* noop */ }
+                return;
+              }
+              // 3 deneme sonrası başarısız → freeze overlay
+              setFreezeOverlay(true);
+              return;
             }
+            // MEDIA ERROR — codec/decoder sorunu, recoverMediaError dene
+            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+              try { h.recoverMediaError(); } catch { /* noop */ }
+              return;
+            }
+            // Diğer fatal hatalar (parse vs.) → freeze overlay → auto-retry
+            setFreezeOverlay(true);
           });
         } else {
           v.src = selected.src!;
@@ -236,9 +268,67 @@ export default function VideoPlayer() {
       } catch {
         v.src = selected.src!;
       }
+
+      // ===== Crash detection — eski repodaki mantık (currentTime advance kontrolü) =====
+      stallCountRef.current = 0;
+      lastPlaybackTimeRef.current = v.currentTime;
+      if (crashCheckRef.current) clearInterval(crashCheckRef.current);
+      crashCheckRef.current = setInterval(() => {
+        if (!v || v.paused) return;
+        const ct = v.currentTime;
+        if (Math.abs(ct - lastPlaybackTimeRef.current) < 0.1) {
+          stallCountRef.current += 1;
+          const n = stallCountRef.current;
+          // 8sn donma → sessiz HLS recover
+          if (n === 8 && hlsRef.current) {
+            try { hlsRef.current.startLoad(); v.play().catch(() => { /* noop */ }); } catch { /* noop */ }
+          }
+          // 15sn donma → overlay
+          if (n >= STALL_THRESHOLD && !freezeOverlay) {
+            setFreezeOverlay(true);
+          }
+          // 45sn donma → tam yeniden başlat
+          if (n >= CRASH_THRESHOLD) {
+            stallCountRef.current = 0;
+            retryStreamRef.current?.();
+          }
+        } else {
+          if (stallCountRef.current > 0) setFreezeOverlay(false);
+          stallCountRef.current = 0;
+        }
+        lastPlaybackTimeRef.current = ct;
+      }, 1000);
+
+      // ===== Video element event listener'ları =====
+      const onWaiting = () => {
+        if (hlsRef.current) { try { hlsRef.current.startLoad(); } catch { /* noop */ } }
+      };
+      const onStalled = () => {
+        if (hlsRef.current) {
+          try { hlsRef.current.startLoad(); } catch { /* noop */ }
+          setTimeout(() => v.play().catch(() => { /* noop */ }), 1000);
+        }
+      };
+      const onError = () => {
+        const code = v.error?.code;
+        if (code === 2 || code === 4) { // NETWORK or SRC_NOT_SUPPORTED
+          retryStreamRef.current?.();
+        }
+      };
+      v.addEventListener('waiting', onWaiting);
+      v.addEventListener('stalled', onStalled);
+      v.addEventListener('error', onError);
+      cleanupListenersRef.current = () => {
+        v.removeEventListener('waiting', onWaiting);
+        v.removeEventListener('stalled', onStalled);
+        v.removeEventListener('error', onError);
+      };
     })();
     return () => {
       cancelled = true;
+      if (crashCheckRef.current) { clearInterval(crashCheckRef.current); crashCheckRef.current = null; }
+      if (freezeAutoRetryRef.current) { clearTimeout(freezeAutoRetryRef.current); freezeAutoRetryRef.current = null; }
+      cleanupListenersRef.current?.();
       if (hlsRef.current) { try { hlsRef.current.destroy(); } catch { /* noop */ } hlsRef.current = null; }
     };
   }, [selected.id, adActive, awaitingResume, hasStarted]);
@@ -264,6 +354,68 @@ export default function VideoPlayer() {
     // Doğal bitiş = store yönlendirme (eski repo davranışı)
     if (ad?.store) redirectToStore(ad.store);
   }, [adIndex]);
+
+  // ===== Stream Retry (eski repo: retryStream) =====
+  // Aynı kanalın HLS bağlantısını sıfırdan kurar — reklam YENİDEN OYNAMAZ
+  const retryStream = useCallback(() => {
+    setFreezeOverlay(false);
+    stallCountRef.current = 0;
+    networkRetryRef.current = 0;
+    if (freezeAutoRetryRef.current) { clearTimeout(freezeAutoRetryRef.current); freezeAutoRetryRef.current = null; }
+    // HLS'i temizle, video'yu sıfırla
+    if (hlsRef.current) { try { hlsRef.current.destroy(); } catch { /* noop */ } hlsRef.current = null; }
+    const v = videoRef.current;
+    if (v) {
+      try { v.pause(); } catch { /* noop */ }
+      v.removeAttribute('src');
+      v.load();
+    }
+    // Aynı kanalı tekrar seç — useEffect tetiklenir, ama reklam state'i değişmez
+    // Trigger re-load by toggling a key state
+    setSelected((s) => ({ ...s })); // shallow clone — id aynı → useEffect dep değişmez
+    // Bunun yerine HLS'i manuel olarak yeniden kur
+    setTimeout(() => {
+      if (!v || !selected.src) return;
+      (async () => {
+        try {
+          if (selected.src!.includes('.m3u8') || selected.src!.includes('/api/')) {
+            const HlsMod = (await import('hls.js')).default;
+            if (HlsMod.isSupported()) {
+              const h = new HlsMod({
+                lowLatencyMode: true,
+                manifestLoadingTimeOut: 10_000,
+                manifestLoadingMaxRetry: 3,
+                fragLoadingTimeOut: 15_000,
+              });
+              hlsRef.current = h;
+              h.loadSource(selected.src!);
+              h.attachMedia(v);
+              h.on(HlsMod.Events.MANIFEST_PARSED, () => v.play().catch(() => { /* noop */ }));
+            } else { v.src = selected.src!; v.play().catch(() => { /* noop */ }); }
+          } else { v.src = selected.src!; v.play().catch(() => { /* noop */ }); }
+        } catch { /* noop */ }
+      })();
+    }, 100);
+  }, [selected]);
+
+  // retryStream'i ref'e koy — interval ve event listener'lar erişebilsin
+  useEffect(() => { retryStreamRef.current = retryStream; }, [retryStream]);
+
+  // ===== Freeze overlay 5sn auto-retry timer (eski repo davranışı) =====
+  useEffect(() => {
+    if (!freezeOverlay) {
+      if (freezeAutoRetryRef.current) { clearTimeout(freezeAutoRetryRef.current); freezeAutoRetryRef.current = null; }
+      return;
+    }
+    if (freezeAutoRetryRef.current) clearTimeout(freezeAutoRetryRef.current);
+    freezeAutoRetryRef.current = setTimeout(() => {
+      freezeAutoRetryRef.current = null;
+      retryStream();
+    }, 5000);
+    return () => {
+      if (freezeAutoRetryRef.current) { clearTimeout(freezeAutoRetryRef.current); freezeAutoRetryRef.current = null; }
+    };
+  }, [freezeOverlay, retryStream]);
 
   const setQuality = useCallback((idx: number) => {
     if (hlsRef.current) hlsRef.current.currentLevel = idx;
@@ -414,6 +566,32 @@ export default function VideoPlayer() {
                 fontSize: 12, letterSpacing: 2,
               }}>
                 Reklam tamamlandı · {selected.name}
+              </div>
+            </div>
+          )}
+
+          {/* FREEZE OVERLAY — yayın dondu / crash → tıklanırsa anında, otomatik 5sn sonra retry */}
+          {freezeOverlay && !adActive && (
+            <div
+              className="overlay freeze-overlay"
+              data-testid="freeze-overlay"
+              onClick={retryStream}
+              style={{ background: 'rgba(7,7,11,0.85)', zIndex: 40, cursor: 'pointer' }}
+            >
+              <svg width="56" height="56" viewBox="0 0 24 24" fill="var(--cyan)" style={{ filter: 'drop-shadow(0 0 10px var(--cyan))' }}>
+                <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+              </svg>
+              <div style={{
+                marginTop: 14, color: '#fff', fontFamily: 'Orbitron, sans-serif',
+                fontSize: 16, letterSpacing: 4, textShadow: '0 0 12px var(--cyan)',
+              }}>
+                YAYIN DONDU
+              </div>
+              <div style={{
+                marginTop: 6, color: 'var(--text-dim)', fontFamily: 'VT323, monospace',
+                fontSize: 13, letterSpacing: 2,
+              }}>
+                Tıkla veya bekle — otomatik yenileniyor...
               </div>
             </div>
           )}
