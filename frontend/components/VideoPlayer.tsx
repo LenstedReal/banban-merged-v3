@@ -134,12 +134,22 @@ export default function VideoPlayer() {
   const CRASH_THRESHOLD = 45;
   const MAX_NETWORK_RETRIES = 3;
 
-  // ===== Pre-roll on channel change =====
+  // ===== Pre-roll on channel change — SADECE session içinde her kanal için BİR KEZ (eski repo) =====
   useEffect(() => {
     if (!hasStarted) return;
-    // Yayın altyapısını durdur — reklam oynarken arka planda video çalışmamalı (eski repo davranışı)
+    // sessionStorage flag — kanal başına 1 kez preroll
+    let alreadyShown = false;
+    try { alreadyShown = sessionStorage.getItem('bb_pr_' + selected.id) === '1'; } catch { /* noop */ }
+    if (alreadyShown) return; // Bu kanal için preroll zaten gösterildi — direkt yayına geç
+    try { sessionStorage.setItem('bb_pr_' + selected.id, '1'); } catch { /* noop */ }
+    // Yayını TAMAMEN durdur (ses bleed önlemek için)
     if (hlsRef.current) { try { hlsRef.current.destroy(); } catch { /* noop */ } hlsRef.current = null; }
-    if (videoRef.current) { videoRef.current.pause(); videoRef.current.removeAttribute('src'); videoRef.current.load(); }
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.muted = true; // arka plan sesi YOK
+      videoRef.current.removeAttribute('src');
+      videoRef.current.load();
+    }
     setAdIndex(nextAdIndex());
     setAdActive(true);
     setAwaitingResume(false);
@@ -390,9 +400,15 @@ export default function VideoPlayer() {
 
   // ===== Controls =====
   const handlePlay = useCallback(() => {
-    setHasStarted(true); setMuted(false);
+    // Yayını ATOMIK olarak başlat — önce reklam state'i, sonra hasStarted
+    // Pre-roll effect bu kanal için tekrar fire etmesin diye sessionStorage flag set ediyoruz
+    try { sessionStorage.setItem('bb_pr_' + selected.id, '1'); } catch { /* noop */ }
+    setAdIndex(nextAdIndex());
+    setAdActive(true);
+    setMuted(false);
     if (videoRef.current) videoRef.current.muted = false;
-  }, []);
+    setHasStarted(true);
+  }, [selected.id]);
 
   // Reklam bittikten sonra kullanıcının yayını başlatmak için bastığı manuel Play tuşu
   const handleResume = useCallback(() => {
@@ -527,8 +543,9 @@ export default function VideoPlayer() {
             className="video-player"
             playsInline
             muted={muted}
+            onClick={() => { if (hasStarted && !adActive && !awaitingResume && !streamError) togglePlay(); }}
             // controls={false} — KENDİ control bar'ımız var (eski repo tarzı)
-            style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
+            style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000', cursor: hasStarted && !adActive && !awaitingResume ? 'pointer' : 'default' }}
             data-testid="video-player"
           />
 
@@ -564,7 +581,12 @@ export default function VideoPlayer() {
                 src={AD_LIBRARY[adIndex].src}
                 autoPlay playsInline muted={muted}
                 onEnded={handleAdEnded}
-                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', background: '#000' }}
+                onError={() => {
+                  // Reklam yüklenemedi → kullanıcıyı manuel-play ekranına al (store yönlendirme YOK)
+                  setAdActive(false);
+                  setAwaitingResume(true);
+                }}
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
                 data-testid="ad-video"
               />
               {/* SOL ÜST — Reklam markası */}
@@ -707,7 +729,7 @@ export default function VideoPlayer() {
             </button>
           )}
 
-          {/* CUSTOM CONTROLS BAR (eski repo tarzı — hover-show) */}
+          {/* CUSTOM CONTROLS BAR (eski repo tarzı — hover-show; pause'da daima görünür; mobil-dostu) */}
           {hasStarted && !adActive && !streamError && (
             <div
               className="video-controls"
@@ -716,10 +738,11 @@ export default function VideoPlayer() {
                 background: 'linear-gradient(to top, rgba(0,0,0,0.85), transparent)',
                 padding: '12px 14px', zIndex: 30,
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
-                opacity: 0, transition: 'opacity 0.25s',
+                opacity: !isPlaying ? 1 : 0, transition: 'opacity 0.25s',
+                flexWrap: 'wrap',
               }}
               onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
-              onMouseLeave={(e) => (e.currentTarget.style.opacity = '0')}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = !isPlaying ? '1' : '0')}
               data-testid="video-controls"
             >
               <div className="controls-left" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -748,7 +771,39 @@ export default function VideoPlayer() {
                   {muted ? '🔇' : '🔊'}
                 </button>
               </div>
-              <div className="controls-right" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div className="controls-right" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                {/* SUNUCU SEÇİCİ — eski repo tarzı, kanalın yedek sunucuları varsa görünür */}
+                {sources.length > 1 && (
+                  <div data-testid="server-selector" style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                    <span style={{ fontFamily: 'Orbitron, sans-serif', fontSize: 9, color: 'var(--text-dim)', letterSpacing: 1.5, marginRight: 4 }}>SUNUCU</span>
+                    {sources.map((_, idx) => (
+                      <button
+                        key={idx}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (idx === serverIndex) return;
+                          networkRetryRef.current = 0;
+                          stallCountRef.current = 0;
+                          setFreezeOverlay(false);
+                          setServerIndex(idx);
+                        }}
+                        data-testid={`server-${idx}`}
+                        title={`Sunucu ${idx + 1}`}
+                        style={{
+                          width: 26, height: 26, borderRadius: 4,
+                          background: idx === serverIndex ? 'linear-gradient(135deg, var(--cyan, #00f0ff), var(--pink, #ff00aa))' : 'rgba(0,0,0,0.5)',
+                          color: idx === serverIndex ? '#000' : 'var(--cyan, #00f0ff)',
+                          border: `1px solid ${idx === serverIndex ? 'var(--pink, #ff00aa)' : 'rgba(0,240,255,0.3)'}`,
+                          fontFamily: 'Orbitron, sans-serif', fontSize: 11, fontWeight: 800,
+                          cursor: 'pointer', padding: 0,
+                          boxShadow: idx === serverIndex ? '0 0 10px var(--pink, #ff00aa)' : 'none',
+                        }}
+                      >
+                        {idx + 1}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {/* QUALITY SELECTOR */}
                 {levels.length > 1 && (
                   <div className="quality-selector" data-testid="quality-selector" style={{ position: 'relative' }}>
