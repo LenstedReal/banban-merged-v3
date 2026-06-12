@@ -4,13 +4,16 @@ import { TR } from '@/lib/i18n';
 
 type Channel = { id: string; name: string; status: 'online' | 'maintenance' | 'checking' | 'coming_soon'; premium?: boolean; src?: string; badge?: string };
 
+// CORS bypass — m3u8'leri backend proxy üzerinden ver (eski repo davranışı)
+const proxify = (url: string) => `/api/stream/proxy?url=${encodeURIComponent(url)}`;
+
 const CHANNELS: Channel[] = [
   { id: 'fastx',     name: 'HIZLI VE ÖFKELİ 11', status: 'coming_soon', badge: 'YAKINDA' },
-  { id: 'spiderman', name: 'SPIDER-MAN: BND',    status: 'online', src: '/spiderman_trailer.mp4', badge: 'NEW' },
-  { id: 'trt1',      name: 'TRT 1',              status: 'online' },
-  { id: 'trthaber',  name: 'TRT HABER',          status: 'online' },
-  { id: 'tv8',       name: 'TV 8',               status: 'online' },
-  { id: 'trtspor',   name: 'TRT SPOR',           status: 'checking' },
+  { id: 'spiderman', name: 'SPIDER-MAN: BND',    status: 'online',      src: '/spiderman_trailer.mp4', badge: 'NEW' },
+  { id: 'trt1',      name: 'TRT 1',              status: 'online',      src: proxify('https://tv-trt1.medya.trt.com.tr/master.m3u8') },
+  { id: 'trthaber',  name: 'TRT HABER',          status: 'online',      src: proxify('https://tv-trthaber.medya.trt.com.tr/master.m3u8') },
+  { id: 'tv8',       name: 'TV 8',               status: 'online',      src: proxify('https://tv8.daioncdn.net/tv8/tv8.m3u8?app=7ddc255a-ef47-4e81-ab14-c0e5f2949788&ce=3') },
+  { id: 'trtspor',   name: 'TRT SPOR',           status: 'online',      src: proxify('https://tv-trtspor1.medya.trt.com.tr/master.m3u8') },
   { id: 'bein1',     name: 'beIN SPORTS 1',      status: 'maintenance', premium: true, src: '/api/bein1/stream.m3u8' },
   { id: 'bein2',     name: 'beIN SPORTS 2',      status: 'maintenance', premium: true },
   { id: 'ssport',    name: 'S SPORT',            status: 'maintenance', premium: true },
